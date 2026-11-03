@@ -1,1 +1,7 @@
-DATABASE
+__pycache__/
+.venv/
+.env
+backend/uploads/
+*.db
+.idea/
+.vscode/

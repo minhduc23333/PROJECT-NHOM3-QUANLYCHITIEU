@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SmartSplit AI</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <nav id="topbar" class="navbar navbar-dark bg-dark px-3">
+    <a class="navbar-brand" href="#/">SmartSplit AI</a>
+    <div class="d-flex align-items-center gap-3 text-white">
+      <span id="user-name"></span>
+      <button id="btn-logout" class="btn btn-outline-light btn-sm">Đăng xuất</button>
+    </div>
+  </nav>
+  <div class="d-flex">
+    <aside id="sidebar" class="bg-light border-end p-2">
+      <div class="nav nav-pills flex-column" id="menu">
+        <a class="nav-link" href="#/" data-route="/">Dashboard</a>
+        <a class="nav-link" href="#/receipts" data-route="/receipts">Hóa đơn</a>
+        <a class="nav-link" href="#/groups" data-route="/groups">Nhóm</a>
+        <a class="nav-link" href="#/debts" data-route="/debts">Công nợ</a>
+      </div>
+    </aside>
+    <main id="view" class="flex-grow-1 p-3"></main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
