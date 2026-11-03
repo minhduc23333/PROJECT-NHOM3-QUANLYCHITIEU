@@ -20,11 +20,11 @@ async function route() {
 
   document.body.classList.toggle('public', found.isPublic)
   document.getElementById('user-name').textContent = getUser()?.full_name ?? ''
-  document.querySelectorAll('#menu a').forEach((a) => {
-    const r = a.dataset.route
-    a.classList.toggle('active', r === '/' ? currentPath() === '/' : currentPath().startsWith(r))
+  document.querySelectorAll('#menu a, #mobile-menu a').forEach((a) => {
+      const r = a.dataset.route
+      a.classList.toggle('active', r === '/' ? currentPath() === '/' : currentPath().startsWith(r))
   })
-  const view = document.getElementById('view')
+    const view = document.getElementById('view')
   view.innerHTML = ''
   await found.render(view, found.params)
 }
