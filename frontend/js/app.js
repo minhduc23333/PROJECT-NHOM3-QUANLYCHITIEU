@@ -1,12 +1,14 @@
-import { getUser, isLoggedIn, logout } from './auth.js'
+import { getUser, isLoggedIn, loadUser, logout } from './auth.js'
 import { addRoute, currentPath, match, navigate } from './router.js'
 import * as login from './pages/login.js'
+import * as register from './pages/register.js'
 import * as dashboard from './pages/dashboard.js'
 import * as groups from './pages/groups.js'
 import * as receipts from './pages/receipts.js'
 import * as debts from './pages/debts.js'
 
 addRoute('/login', login.render, { isPublic: true })
+addRoute('/register', register.render, { isPublic: true })
 addRoute('/', dashboard.render)
 addRoute('/groups', groups.render)
 addRoute('/receipts', receipts.render)
@@ -18,6 +20,8 @@ async function route() {
   if (!found.isPublic && !isLoggedIn()) return navigate('/login')   // route guard
   if (found.isPublic && isLoggedIn()) return navigate('/')
 
+  if (!found.isPublic) await loadUser()
+  if (!isLoggedIn() && !found.isPublic) return navigate('/login')   // loadUser có thể đã logout (401)
   document.body.classList.toggle('public', found.isPublic)
   document.getElementById('user-name').textContent = getUser()?.full_name ?? ''
   document.querySelectorAll('#menu a, #mobile-menu a').forEach((a) => {
