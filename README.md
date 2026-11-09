@@ -44,6 +44,6 @@ Lỗi luôn có dạng `{"error": {"code", "message", "details"}}`.
 - **Tạo nhánh mới:** `feature/<tên-chức-năng>` (VD: `feature/api-login`).
 
 ## Quy ước Commit
-- `feat: [Mô tả]` - Thêm chức năng mới.
+- `Sprint: [Mô tả]` - Thêm chức năng mới.
 - `fix: [Mô tả]` - Sửa lỗi bug.
 - `docs: [Mô tả]` - Viết hoặc sửa tài liệu.
