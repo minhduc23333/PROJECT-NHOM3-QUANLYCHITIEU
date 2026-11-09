@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -18,7 +18,10 @@ class ItemSelection(Base):
 
 class SplitDetail(Base):
     __tablename__ = "split_details"
-    __table_args__ = (UniqueConstraint("receipt_id", "user_id", name="uq_split_receipt_user"),)
+    __table_args__ = (
+        UniqueConstraint("receipt_id", "user_id", name="uq_split_receipt_user"),
+        CheckConstraint("item_amount >= 0 AND fee_amount >= 0 AND final_amount >= 0", name="ck_split_nonneg"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     receipt_id: Mapped[int] = mapped_column(ForeignKey("receipts.id"), index=True)
@@ -30,6 +33,11 @@ class SplitDetail(Base):
 
 class Debt(Base):
     __tablename__ = "debts"
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_debt_amount_pos"),
+        CheckConstraint("debtor_id <> creditor_id", name="ck_debt_not_self"),
+        CheckConstraint("status IN ('OPEN','PAID')", name="ck_debt_status"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     receipt_id: Mapped[int] = mapped_column(ForeignKey("receipts.id"), index=True)

@@ -13,6 +13,11 @@ class Receipt(Base):
     __tablename__ = "receipts"
     __table_args__ = (
         CheckConstraint("status IN ('DRAFT','VERIFIED','SETTLED')", name="ck_receipt_status"),
+        CheckConstraint(
+            "COALESCE(subtotal,0) >= 0 AND COALESCE(tax_amount,0) >= 0 "
+            "AND COALESCE(service_fee,0) >= 0 AND COALESCE(total_amount,0) >= 0",
+            name="ck_receipt_amounts",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -34,6 +39,9 @@ class Receipt(Base):
 
 class ReceiptItem(Base):
     __tablename__ = "receipt_items"
+    __table_args__ = (
+        CheckConstraint("quantity >= 0 AND unit_price >= 0 AND line_total >= 0", name="ck_item_nonneg"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     receipt_id: Mapped[int] = mapped_column(ForeignKey("receipts.id", ondelete="CASCADE"), index=True)

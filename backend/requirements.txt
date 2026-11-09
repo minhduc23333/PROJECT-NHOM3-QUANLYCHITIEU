@@ -5,8 +5,10 @@ alembic
 pymysql
 cryptography
 pydantic-settings
+email-validator
 python-multipart
 bcrypt
+pyjwt
 httpx
 pytest
 ruff
