@@ -1,27 +1,52 @@
-const KEY = 'smartsplit_token'
-let currentUser = null
+const TOKEN_KEY = "smartsplit_token";
+const USER_KEY = "smartsplit_user";
 
-export const getToken = () => localStorage.getItem(KEY)
-export const isLoggedIn = () => !!getToken()
-export const getUser = () => currentUser
-export const setUser = (u) => { currentUser = u }
+export const getToken = () => localStorage.getItem(TOKEN_KEY);
+
+export function getUser() {
+  try {
+    return JSON.parse(localStorage.getItem(USER_KEY));
+  } catch {
+    return null;
+  }
+}
+
+export function setUser(u) {
+  localStorage.setItem(USER_KEY, JSON.stringify(u));
+}
+
+// Đọc hạn (exp) trong JWT để chặn route sớm, không cần gọi server
+function tokenExpired(token) {
+  try {
+    const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const { exp } = JSON.parse(atob(b64));
+    return exp ? exp * 1000 <= Date.now() : false;
+  } catch {
+    return true;
+  }
+}
+
+export function isLoggedIn() {
+  const t = getToken();
+  if (!t) return false;
+  if (tokenExpired(t)) {
+    clearSession();
+    return false;
+  }
+  return true;
+}
 
 export function setSession(token, user) {
-  localStorage.setItem(KEY, token)
-  currentUser = user
+  localStorage.setItem(TOKEN_KEY, token);
+  setUser(user);
+}
+
+export function clearSession() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
 }
 
 export function logout() {
-  localStorage.removeItem(KEY)
-  currentUser = null
-  location.hash = '#/login'
-}
-
-// Tải lại thông tin user từ token đang lưu (gọi khi mở / F5 trang).
-// 401 đã được api.js xử lý (tự logout); lỗi khác (mất mạng...) thì bỏ qua, không đá user ra.
-export async function loadUser() {
-  if (!isLoggedIn() || currentUser) return currentUser
-  const { get } = await import('./api.js')
-  try { currentUser = await get('/auth/me') } catch { /* giữ nguyên */ }
-  return currentUser
+  clearSession();
+  if (location.hash !== "#/login") location.hash = "#/login";
 }

@@ -8,7 +8,7 @@ pydantic-settings
 email-validator
 python-multipart
 bcrypt
-pyjwt
+PyJWT
 httpx
 pytest
 ruff

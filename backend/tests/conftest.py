@@ -1,32 +1,27 @@
 import os
 
-# Phải đặt trước khi import app để Settings đọc được
-os.environ["JWT_SECRET"] = "test-secret-test-secret-test-secret-1234"
-os.environ["DATABASE_URL"] = "sqlite://"
+# Test chạy trên SQLite tạm, không cần MySQL
+os.environ["DATABASE_URL"] = "sqlite:///./test.db"
+os.environ["JWT_SECRET"] = "test-secret-test-secret-test-secret-123"
 
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
-from app.core.db import Base, get_db
-from app.main import app
+from app.core.db import Base, engine  # noqa: E402
+import app.models  # noqa: E402,F401
+from app.main import app  # noqa: E402
 
 
 @pytest.fixture()
 def client():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    with TestClient(app, raise_server_exceptions=False) as c:
+        yield c
+    Base.metadata.drop_all(engine)
 
-    def override():
-        db = Session()
-        try:
-            yield db
-        finally:
-            db.close()
 
-    app.dependency_overrides[get_db] = override
-    yield TestClient(app)
-    app.dependency_overrides.clear()
+def register(client, email="a@x.vn", name="Người A"):
+    r = client.post("/api/auth/register", json={"full_name": name, "email": email, "password": "123456"})
+    assert r.status_code == 201, r.text
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}

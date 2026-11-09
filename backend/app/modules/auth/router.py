@@ -1,25 +1,23 @@
-from fastapi import APIRouter, Depends, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, status
 
-from app.core.db import get_db
-from app.models import User
+from app.core.deps import DB, CurrentUser
+from app.core.errors import COMMON_ERRORS
 from app.modules.auth import service
-from app.modules.auth.deps import get_current_user
 from app.modules.auth.schemas import LoginIn, RegisterIn, TokenOut, UserOut
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter(prefix="/auth", tags=["auth"], responses=COMMON_ERRORS)
 
 
-@router.post("/register", response_model=TokenOut, status_code=status.HTTP_201_CREATED)
-def register(data: RegisterIn, db: Session = Depends(get_db)):
+@router.post("/register", response_model=TokenOut, status_code=status.HTTP_201_CREATED, summary="Đăng ký tài khoản")
+def register(data: RegisterIn, db: DB):
     return service.register(db, data)
 
 
-@router.post("/login", response_model=TokenOut)
-def login(data: LoginIn, db: Session = Depends(get_db)):
+@router.post("/login", response_model=TokenOut, summary="Đăng nhập, nhận JWT")
+def login(data: LoginIn, db: DB):
     return service.login(db, data)
 
 
-@router.get("/me", response_model=UserOut)
-def me(user: User = Depends(get_current_user)):
+@router.get("/me", response_model=UserOut, summary="Thông tin người dùng hiện tại")
+def me(user: CurrentUser):
     return user
