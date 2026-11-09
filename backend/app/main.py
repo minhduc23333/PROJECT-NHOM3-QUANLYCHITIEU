@@ -67,6 +67,9 @@ for r in (auth_router, groups_router, receipts_router, ocr_router, split_router,
 app.include_router(api)
 
 # Phục vụ frontend (HTML/JS thuần) ở "/". Phải đặt CUỐI CÙNG, sau mọi route API.
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
+
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 if FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
