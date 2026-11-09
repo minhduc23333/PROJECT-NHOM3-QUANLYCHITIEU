@@ -1,37 +1,41 @@
-export function render(el) {
-  el.innerHTML = '<h2>Dashboard</h2>'
-}
+import { get } from "../api.js";
+import { barChartVND } from "../charts.js";
+import { formatVND } from "../format.js";
+import { esc, renderState } from "../ui.js";
 
-import { formatVND } from '../format.js'
-import { confirmDialog, dataTable, renderState, toast } from '../ui.js'
+const card = (title, value, cls = "") => `
+  <div class="col-6 col-lg-3"><div class="card stat-card h-100"><div class="card-body">
+    <div class="text-muted small">${esc(title)}</div>
+    <div class="value ${cls}">${value}</div>
+  </div></div></div>`;
 
 export function render(el) {
-  el.innerHTML = `<h2>Dashboard (trang thử)</h2>
-    <div class="d-flex gap-2 mb-3 flex-wrap">
-      <button class="btn btn-outline-secondary" data-mode="data">Dữ liệu</button>
-      <button class="btn btn-outline-secondary" data-mode="empty">Trống</button>
-      <button class="btn btn-outline-secondary" data-mode="error">Lỗi</button>
-      <button class="btn btn-success" id="b-ok">Toast OK</button>
-      <button class="btn btn-danger" id="b-err">Toast lỗi</button>
-      <button class="btn btn-warning" id="b-confirm">Confirm</button>
-    </div><div id="box"></div>`
-  const box = el.querySelector('#box')
-  const cols = [{ key: 'name', title: 'Món' }, { key: 'amount', title: 'Tiền', align: 'end', render: (v) => formatVND(v) }]
-  const load = (mode) => renderState(
-    box,
-    async () => {
-      await new Promise((r) => setTimeout(r, 400))
-      if (mode === 'error') throw new Error('Không tải được dữ liệu')
-      return mode === 'empty' ? [] : [{ name: 'Phở', amount: 90000 }]
+  el.innerHTML = `<h2 class="mb-3">Tổng quan</h2><div id="dash"></div>`;
+
+  renderState(
+    el.querySelector("#dash"),
+    () => get("/dashboard/summary"),
+    (box, s) => {
+      box.innerHTML = `
+      <div class="row g-3 mb-4">
+        ${card("Nhóm tham gia", s.group_count)}
+        ${card("Hóa đơn", s.receipt_count)}
+        ${card("Tôi đang nợ", formatVND(s.i_owe), "text-danger")}
+        ${card("Người khác nợ tôi", formatVND(s.owed_to_me), "text-success")}
+      </div>
+      <div class="card"><div class="card-body">
+        <h5 class="card-title">Chi tiêu tôi đã trả, 6 tháng gần nhất</h5>
+        <div class="chart-box"><canvas id="chart-monthly"></canvas></div>
+      </div></div>`;
+      const labels = s.monthly.map((m) =>
+        m.month.split("-").reverse().join("/"),
+      );
+      barChartVND(
+        box.querySelector("#chart-monthly"),
+        labels,
+        s.monthly.map((m) => Number(m.total)),
+        "Chi tiêu",
+      );
     },
-    (c, rows) => { c.innerHTML = dataTable(cols, rows) },
-    { isEmpty: (d) => d.length === 0, emptyText: 'Chưa có hóa đơn' },
-  )
-  el.querySelectorAll('[data-mode]').forEach((b) => (b.onclick = () => load(b.dataset.mode)))
-  el.querySelector('#b-ok').onclick = () => toast.success('Đã lưu')
-  el.querySelector('#b-err').onclick = () => toast.error('Có lỗi xảy ra')
-  el.querySelector('#b-confirm').onclick = async () => {
-    if (await confirmDialog({ title: 'Xóa?', message: 'Không hoàn tác được', danger: true })) toast.success('Đã xóa')
-  }
-  load('data')
+  );
 }

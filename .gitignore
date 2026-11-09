@@ -5,3 +5,4 @@ backend/uploads/
 *.db
 .idea/
 .vscode/
+.pytest_cache/

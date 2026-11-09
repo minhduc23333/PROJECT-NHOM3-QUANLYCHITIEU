@@ -1,15 +1,11 @@
 """Chạy: python -m scripts.seed (từ thư mục backend). Chạy lại nhiều lần không bị trùng."""
-import bcrypt
 from sqlalchemy import select
 
 from app.core.db import SessionLocal
+from app.core.security import hash_password
 from app.models import Group, GroupMember, User
 
 DEMO_PASSWORD = "123456"
-
-
-def hash_pw(pw: str) -> str:
-    return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
 
 
 def main():
@@ -18,7 +14,7 @@ def main():
         for name, email in [("An Nguyễn", "an@demo.vn"), ("Bình Trần", "binh@demo.vn"), ("Chi Lê", "chi@demo.vn")]:
             u = db.scalar(select(User).where(User.email == email))
             if not u:
-                u = User(full_name=name, email=email, password_hash=hash_pw(DEMO_PASSWORD))
+                u = User(full_name=name, email=email, password_hash=hash_password(DEMO_PASSWORD))
                 db.add(u)
                 db.flush()
             users.append(u)

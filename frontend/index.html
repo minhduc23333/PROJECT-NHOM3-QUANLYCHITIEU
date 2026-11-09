@@ -1,55 +1,101 @@
 <!doctype html>
 <html lang="vi">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SmartSplit AI</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="css/app.css">
-</head>
-<body>
-  <nav id="topbar" class="navbar navbar-dark bg-dark px-3">
-    <button class="navbar-toggler d-md-none me-2" type="button" data-bs-toggle="offcanvas" data-bs-target="#mobileSidebar">
-    <span class="navbar-toggler-icon"></span>
-    </button>
-    <a class="navbar-brand" href="#/">SmartSplit AI</a>
-    <div class="d-flex align-items-center gap-3 text-white">
-      <span id="user-name"></span>
-      <button id="btn-logout" class="btn btn-outline-light btn-sm">Đăng xuất</button>
-    </div>
-  </nav>
-  <div class="d-flex">
-    <aside id="sidebar" class="bg-light border-end p-2">
-      <div class="nav nav-pills flex-column" id="menu">
-        <a class="nav-link" href="#/" data-route="/">Dashboard</a>
-        <a class="nav-link" href="#/receipts" data-route="/receipts">Hóa đơn</a>
-        <a class="nav-link" href="#/groups" data-route="/groups">Nhóm</a>
-        <a class="nav-link" href="#/debts" data-route="/debts">Công nợ</a>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SmartSplit AI</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="stylesheet" href="css/auth.css" />
+  </head>
+  <body>
+    <nav id="topbar" class="navbar navbar-dark bg-dark px-3 flex-nowrap">
+      <button
+        class="navbar-toggler d-md-none me-2"
+        type="button"
+        data-bs-toggle="offcanvas"
+        data-bs-target="#mobileSidebar"
+        aria-label="Mở menu"
+      >
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <a class="navbar-brand me-auto" href="#/">SmartSplit AI</a>
+      <div class="d-flex align-items-center gap-2 text-white">
+        <span id="user-name" class="d-none d-sm-inline"></span>
+        <button id="btn-logout" class="btn btn-outline-light btn-sm">
+          Đăng xuất
+        </button>
       </div>
-    </aside>
-    <div class="offcanvas offcanvas-start" tabindex="-1" id="mobileSidebar">
-      <div class="offcanvas-header">
-        <h5 class="offcanvas-title">Menu</h5>
-        <button type="button" class="btn-close text-reset" data-bs-dismiss="offcanvas" aria-label="Close"></button>
-      </div>
-      <div class="offcanvas-body">
-  
-        <div class="nav nav-pills flex-column" id="mobile-menu">
-          <a class="nav-link" href="#/" data-route="/" data-bs-dismiss="offcanvas">Dashboard</a>
-          <a class="nav-link" href="#/receipts" data-route="/receipts" data-bs-dismiss="offcanvas">Hóa đơn</a>
-          <a class="nav-link" href="#/groups" data-route="/groups" data-bs-dismiss="offcanvas">Nhóm</a>
-          <a class="nav-link" href="#/debts" data-route="/debts" data-bs-dismiss="offcanvas">Công nợ</a>
+    </nav>
+    <div class="d-flex">
+      <aside id="sidebar" class="bg-light border-end p-2 d-none d-md-block">
+        <div class="nav nav-pills flex-column" id="menu">
+          <a class="nav-link" href="#/" data-route="/">Dashboard</a>
+          <a class="nav-link" href="#/receipts" data-route="/receipts"
+            >Hóa đơn</a
+          >
+          <a class="nav-link" href="#/groups" data-route="/groups">Nhóm</a>
+          <a class="nav-link" href="#/debts" data-route="/debts">Công nợ</a>
+        </div>
+      </aside>
+      <div class="offcanvas offcanvas-start" tabindex="-1" id="mobileSidebar">
+        <div class="offcanvas-header">
+          <h5 class="offcanvas-title">Menu</h5>
+          <button
+            type="button"
+            class="btn-close text-reset"
+            data-bs-dismiss="offcanvas"
+            aria-label="Close"
+          ></button>
+        </div>
+        <div class="offcanvas-body">
+          <div class="nav nav-pills flex-column" id="mobile-menu">
+            <a
+              class="nav-link"
+              href="#/"
+              data-route="/"
+              data-bs-dismiss="offcanvas"
+              >Dashboard</a
+            >
+            <a
+              class="nav-link"
+              href="#/receipts"
+              data-route="/receipts"
+              data-bs-dismiss="offcanvas"
+              >Hóa đơn</a
+            >
+            <a
+              class="nav-link"
+              href="#/groups"
+              data-route="/groups"
+              data-bs-dismiss="offcanvas"
+              >Nhóm</a
+            >
+            <a
+              class="nav-link"
+              href="#/debts"
+              data-route="/debts"
+              data-bs-dismiss="offcanvas"
+              >Công nợ</a
+            >
+          </div>
         </div>
       </div>
-    </div>
 
       <main id="view" class="flex-grow-1 p-3"></main>
-  </div>
+    </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.js"></script>
-  <script type="module" src="js/app.js"></script>
-</body>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.js"></script>
+    <script type="module" src="js/app.js"></script>
+  </body>
 </html>
-
-// test
