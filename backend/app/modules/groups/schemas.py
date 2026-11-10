@@ -1,6 +1,10 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+
+class MemberAdd(BaseModel):
+    email: EmailStr = Field(examples=["thanhvien@example.com"])
 
 
 class GroupCreate(BaseModel):
