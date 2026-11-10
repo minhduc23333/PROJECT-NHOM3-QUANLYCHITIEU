@@ -1,0 +1,1 @@
+"""Pydantic schema cho module split (chưa triển khai)."""

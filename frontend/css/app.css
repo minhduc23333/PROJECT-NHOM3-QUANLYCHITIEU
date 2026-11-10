@@ -1,4 +1,25 @@
-#sidebar { width: 200px; min-height: calc(100vh - 56px); }
-main#view { min-width: 0; }
-body.public #topbar, body.public #sidebar { display: none; }
-body.public main#view { max-width: 420px; margin: 8vh auto; }
+#sidebar {
+  width: 200px;
+  min-height: calc(100vh - 56px);
+}
+main#view {
+  min-width: 0;
+}
+
+/* Trang public (đăng nhập / đăng ký): ẩn khung, trang tự lo bố cục (css/auth.css) */
+body.public #topbar,
+body.public #sidebar {
+  display: none !important;
+}
+body.public main#view {
+  padding: 0 !important;
+}
+
+.stat-card .value {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+.chart-box {
+  position: relative;
+  height: 280px;
+}

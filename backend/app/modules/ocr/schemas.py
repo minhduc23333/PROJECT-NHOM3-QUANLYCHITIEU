@@ -1,0 +1,1 @@
+"""Pydantic schema cho module ocr (chưa triển khai)."""
