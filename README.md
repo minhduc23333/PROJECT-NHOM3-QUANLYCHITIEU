@@ -19,7 +19,7 @@ python -m scripts.seed      # (tùy chọn) 3 user demo + 1 nhóm, mật khẩu 
 uvicorn app.main:app --reload --port 8000
 ```
 
-Mở http://localhost:8000 (frontend được backend phục vụ luôn), tài liệu API tại http://localhost:8000/docs.
+Mở http://localhost:8000 (frontend được backend phục vụ luôn; các trang như `/login` và `/groups` cũng mở trực tiếp được), tài liệu API tại http://localhost:8000/docs.
 Frontend không cần cài gì thêm: Bootstrap/Chart.js nằm sẵn trong `frontend/vendor/`.
 
 ## Test
@@ -32,10 +32,10 @@ cd backend && pytest
 
 | Method | Đường dẫn | Mô tả |
 |---|---|---|
-| GET | `/health` | Kiểm tra server và DB |
-| POST | `/auth/register` | Đăng ký (`full_name`, `email`, `password` ≥ 8 ký tự). Trả 201 + token. Email trùng → 409 |
-| POST | `/auth/login` | Đăng nhập (`email`, `password`). Trả token |
-| GET | `/auth/me` | Thông tin người dùng hiện tại (header `Authorization: Bearer <token>`) |
+| GET | `/api/health` | Kiểm tra server và DB (`/health` cũng được hỗ trợ) |
+| POST | `/api/auth/register` | Đăng ký (`full_name`, `email`, `password` ≥ 8 ký tự). Trả 201 + token. Email trùng → 409 |
+| POST | `/api/auth/login` | Đăng nhập (`email`, `password`). Trả token |
+| GET | `/api/auth/me` | Thông tin người dùng hiện tại (header `Authorization: Bearer <token>`) |
 
 Lỗi luôn có dạng `{"error": {"code", "message", "details"}}`.
 

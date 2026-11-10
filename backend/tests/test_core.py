@@ -3,6 +3,23 @@ from tests.conftest import register
 
 def test_health(client):
     assert client.get("/api/health").json() == {"status": "ok"}
+    assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_frontend_routes_support_direct_navigation(client):
+    paths = (
+        "/login",
+        "/register",
+        "/groups",
+        "/groups/1",
+        "/receipts",
+        "/debts",
+        "/dev/ui",
+    )
+    for path in paths:
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "<!doctype html>" in response.text.lower()
 
 
 def test_register_login_me(client):

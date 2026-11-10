@@ -51,3 +51,4 @@ def test_login_wrong_password_and_unknown_email_same_message(client):
 def test_me_requires_valid_token(client):
     assert client.get("/api/auth/me").status_code == 401
     assert client.get("/api/auth/me", headers={"Authorization": "Bearer rac"}).status_code == 401
+    

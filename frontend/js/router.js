@@ -24,7 +24,8 @@ export function match(fullPath) {
   return null;
 }
 
-export const currentPath = () => location.hash.slice(1) || "/";
+export const currentPath = () =>
+  location.hash.slice(1) || `${location.pathname}${location.search}`;
 export const currentPathname = () => currentPath().split("?")[0];
 export const navigate = (path) => {
   location.hash = "#" + path;
