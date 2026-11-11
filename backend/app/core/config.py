@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "uploads"
     MAX_UPLOAD_MB: int = 5
 
+    # OCR (module app/modules/ocr)
+    OCR_ENGINE: str = "tesseract"        # tesseract | easyocr
+    OCR_LANG: str = "vie+eng"            # chỉ dùng cho tesseract (cần tessdata 'vie')
+    OCR_TIMEOUT_SEC: float = 30.0
+    TESSERACT_CMD: str = ""              # vd Windows: D:/Tesseract-OCR/tesseract.exe
+
     CORS_ORIGINS: str = "http://localhost:8000"
 
     @property
