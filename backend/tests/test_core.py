@@ -74,6 +74,61 @@ def test_groups_and_dashboard(client):
     assert s["group_count"] == 1 and len(s["monthly"]) == 6
 
 
+def test_leader_can_add_and_list_group_members(client):
+    leader = register(client, "leader@x.vn")
+    member = register(client, "member@x.vn", "Người B")
+    group_id = client.post("/api/groups", json={"name": "Nhóm A"}, headers=leader).json()["id"]
+
+    added = client.post(
+        f"/api/groups/{group_id}/members",
+        json={"email": "MEMBER@x.vn"},
+        headers=leader,
+    )
+    assert added.status_code == 201
+    assert added.json() == {
+        "user_id": 2,
+        "full_name": "Người B",
+        "email": "member@x.vn",
+        "role": "MEMBER",
+        "status": "ACTIVE",
+    }
+
+    members = client.get(f"/api/groups/{group_id}/members", headers=member).json()
+    assert [entry["email"] for entry in members] == ["leader@x.vn", "member@x.vn"]
+
+
+def test_adding_group_members_enforces_rbac_and_rejects_missing_or_duplicate(client):
+    leader = register(client, "leader@x.vn")
+    member = register(client, "member@x.vn", "Người B")
+    group_id = client.post("/api/groups", json={"name": "Nhóm A"}, headers=leader).json()["id"]
+
+    denied = client.post(
+        f"/api/groups/{group_id}/members",
+        json={"email": "member@x.vn"},
+        headers=member,
+    )
+    assert denied.status_code == 403
+
+    missing = client.post(
+        f"/api/groups/{group_id}/members",
+        json={"email": "unknown@x.vn"},
+        headers=leader,
+    )
+    assert missing.status_code == 404
+
+    assert client.post(
+        f"/api/groups/{group_id}/members",
+        json={"email": "member@x.vn"},
+        headers=leader,
+    ).status_code == 201
+    duplicate = client.post(
+        f"/api/groups/{group_id}/members",
+        json={"email": "MEMBER@x.vn"},
+        headers=leader,
+    )
+    assert duplicate.status_code == 409
+
+
 def test_swagger_has_bearer(client):
     spec = client.get("/openapi.json").json()
     assert "HTTPBearer" in spec["components"]["securitySchemes"]
