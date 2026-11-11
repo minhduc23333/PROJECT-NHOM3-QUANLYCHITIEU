@@ -63,7 +63,14 @@ function showToast(text, kind) {
     <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
   toastBox().appendChild(el);
   el.addEventListener("hidden.bs.toast", () => el.remove());
-  new bootstrap.Toast(el, { delay: 3000 }).show();
+  if (window.bootstrap?.Toast) {
+    new bootstrap.Toast(el, { delay: 3000 }).show();
+  } else {
+    // Bootstrap chưa tải được: vẫn hiện thông báo, tự ẩn sau 3 giây, không làm hỏng luồng đăng nhập
+    el.classList.add("show");
+    el.querySelector(".btn-close").onclick = () => el.remove();
+    setTimeout(() => el.remove(), 3000);
+  }
 }
 
 export const toast = {
