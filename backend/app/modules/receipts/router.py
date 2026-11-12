@@ -41,6 +41,20 @@ async def upload_receipt(group_id: int, db: DB, user: CurrentUser, file: Annotat
     return service.create_receipt(db, user, group_id, image)
 
 
+@router.post(
+    "/receipts/personal",
+    response_model=ReceiptOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Tải ảnh hóa đơn cá nhân (không cần nhóm, chỉ chủ tài khoản xem được)",
+)
+async def upload_personal_receipt(db: DB, user: CurrentUser, file: Annotated[UploadFile, File()]):
+    limit = settings.MAX_UPLOAD_MB * 1024 * 1024
+    image = await file.read(limit + 1)
+    if len(image) > limit:
+        raise HTTPException(status_code=413, detail=f"Ảnh không được vượt quá {settings.MAX_UPLOAD_MB} MB")
+    return service.create_personal_receipt(db, user, image)
+
+
 @router.get("/receipts/{receipt_id}", response_model=ReceiptDetail, summary="Xem hóa đơn + các dòng món (bản nháp)")
 def get_receipt(receipt_id: int, db: DB, user: CurrentUser):
     return service.get_receipt(db, user, receipt_id)

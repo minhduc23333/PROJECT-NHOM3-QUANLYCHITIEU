@@ -9,7 +9,7 @@ class ReceiptOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    group_id: int
+    group_id: int | None = None
     uploaded_by: int
     payer_id: int | None = None
     merchant_name: str | None = None
@@ -59,7 +59,7 @@ class ItemOut(BaseModel):
 
 # ---------- Hóa đơn nháp ----------
 class ReceiptUpdate(BaseModel):
-    """Sửa kết quả OCR ở phần đầu hóa đơn (chỉ người tải lên, chỉ khi còn DRAFT). Chỉ gửi trường cần đổi."""
+    """Sửa thông tin đầu hóa đơn (chỉ người tải lên, không sửa được sau khi SETTLED)."""
 
     merchant_name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)] | None = None
     receipt_date: date | None = None
@@ -76,8 +76,8 @@ class ReceiptDetail(ReceiptOut):
     service_fee: Decimal | None = None
     items: list[ItemOut] = []
     items_total: Decimal = Decimal("0")       # SUM(line_total) thực tế, để UI so với subtotal
-    can_edit_receipt: bool = False            # người tải lên
-    can_edit_items: bool = False              # người tải lên hoặc Leader (và hóa đơn còn DRAFT)
+    can_edit_receipt: bool = False            # người tải lên, trừ khi SETTLED
+    can_edit_items: bool = False              # người tải lên hoặc Leader, trừ khi SETTLED
 
 
 class VerifyIn(BaseModel):

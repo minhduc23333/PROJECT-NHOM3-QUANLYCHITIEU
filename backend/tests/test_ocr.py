@@ -161,6 +161,31 @@ def test_ocr_endpoint_requires_membership(client, monkeypatch, tmp_path):
     assert client.post("/api/ocr/receipts/9999", headers=owner).status_code == 404
 
 
+def test_ocr_personal_receipt_is_available_only_to_owner(client, monkeypatch, tmp_path):
+    from app.modules.ocr import service
+    from app.modules.receipts import service as receipts_service
+    from tests.conftest import register
+
+    monkeypatch.setattr(receipts_service.settings, "UPLOAD_DIR", str(tmp_path))
+    owner = register(client, "personal@x.vn")
+    other_user = register(client, "other@x.vn")
+    response = client.post(
+        "/api/receipts/personal",
+        headers=owner,
+        files={"file": ("r.png", b"\x89PNG\r\n\x1a\nvalid", "image/png")},
+    )
+    receipt_id = response.json()["id"]
+
+    def fail_ocr(path):
+        raise OcrError("OCR test failure")
+
+    monkeypatch.setattr(service, "extract", fail_ocr)
+    assert client.post(f"/api/ocr/receipts/{receipt_id}", headers=other_user).status_code == 403
+    processed = client.post(f"/api/ocr/receipts/{receipt_id}", headers=owner)
+    assert processed.status_code == 200, processed.text
+    assert processed.json()["receipt"]["ocr_status"] == "FAILED"
+
+
 # ---------- hóa đơn viết số kiểu "50 662 000" (khoảng trắng làm dấu nghìn) ----------
 
 def test_summary_line_with_space_thousands_separator():

@@ -18,8 +18,8 @@ from app.modules.receipts.schemas import (
     VerifyIn,
 )
 
-# Quyền: xem = thành viên ACTIVE; sửa thông tin OCR = người tải lên;
-# thêm/sửa/xóa dòng món + xác nhận + chốt = người tải lên hoặc LEADER. Chỉ sửa được khi hóa đơn còn DRAFT (khác -> 409).
+# Quyền: xem = thành viên ACTIVE; sửa thông tin = người tải lên;
+# thêm/sửa/xóa dòng món + xác nhận + chốt = người tải lên hoặc LEADER.
 # Luồng trạng thái: DRAFT --verify--> VERIFIED --settle--> SETTLED. Upload ảnh -> OCR (module ocr) tạo bản nháp.
 
 def list_group_receipts(db: Session, user: User, group_id: int) -> list[Receipt]:
@@ -35,29 +35,43 @@ MAX_MONEY = Decimal("10") ** 13  # DECIMAL(15,2) chứa được < 10^13
 
 
 # ---------- Helper ----------
-def _load(db: Session, user: User, receipt_id: int, *, lock: bool = False) -> tuple[Receipt, GroupMember]:
-    """404 nếu không có hóa đơn, 403 nếu không phải thành viên ACTIVE của nhóm chứa nó."""
+def _load(db: Session, user: User, receipt_id: int, *, lock: bool = False) -> tuple[Receipt, GroupMember | None]:
+    """404 nếu không có hóa đơn; hóa đơn cá nhân chỉ chủ sở hữu truy cập được."""
     stmt = select(Receipt).where(Receipt.id == receipt_id)
     if lock:
         stmt = stmt.with_for_update()  # MySQL: khóa dòng, tránh 2 người xác nhận cùng lúc
     receipt = db.scalar(stmt)
     if receipt is None:
         raise NotFound("Không tìm thấy hóa đơn")
+    if receipt.group_id is None:
+        if receipt.uploaded_by != user.id:
+            raise Forbidden("Bạn không có quyền truy cập hóa đơn cá nhân này")
+        return receipt, None
     _, member = get_group_membership(db, receipt.group_id, user.id)
     return receipt, member
 
 
-def _is_uploader(receipt: Receipt, member: GroupMember) -> bool:
-    return member.user_id == receipt.uploaded_by
+def _is_uploader(receipt: Receipt, member: GroupMember | None) -> bool:
+    return member is None or member.user_id == receipt.uploaded_by
 
 
-def _is_uploader_or_leader(receipt: Receipt, member: GroupMember) -> bool:
-    return _is_uploader(receipt, member) or member.role == "LEADER"
+def _is_uploader_or_leader(receipt: Receipt, member: GroupMember | None) -> bool:
+    return _is_uploader(receipt, member) or (member is not None and member.role == "LEADER")
 
 
 def _require_draft(receipt: Receipt) -> None:
     if receipt.status != "DRAFT":
         raise Conflict("Hóa đơn đã được xác nhận, không thể chỉnh sửa")
+
+
+def _require_editable(receipt: Receipt) -> None:
+    if receipt.status == "SETTLED":
+        raise Conflict("Hóa đơn đã chốt, không thể chỉnh sửa")
+
+
+def _reopen_if_split_inputs_changed(receipt: Receipt, changed: bool) -> None:
+    if changed and receipt.status == "VERIFIED":
+        receipt.status = "DRAFT"
 
 
 def _expected_line_total(quantity: Decimal, unit_price: Decimal) -> Decimal:
@@ -83,15 +97,15 @@ def _items(db: Session, receipt_id: int) -> list[ReceiptItem]:
     return list(db.scalars(select(ReceiptItem).where(ReceiptItem.receipt_id == receipt_id).order_by(ReceiptItem.id)))
 
 
-def _detail(db: Session, receipt: Receipt, member: GroupMember) -> ReceiptDetail:
+def _detail(db: Session, receipt: Receipt, member: GroupMember | None) -> ReceiptDetail:
     items = _items(db, receipt.id)
-    draft = receipt.status == "DRAFT"
+    editable = receipt.status != "SETTLED"
     return ReceiptDetail.model_validate(receipt).model_copy(
         update={
             "items": [ItemOut.model_validate(i) for i in items],
             "items_total": sum((i.line_total for i in items), ZERO),
-            "can_edit_receipt": draft and _is_uploader(receipt, member),
-            "can_edit_items": draft and _is_uploader_or_leader(receipt, member),
+            "can_edit_receipt": editable and _is_uploader(receipt, member),
+            "can_edit_items": editable and _is_uploader_or_leader(receipt, member),
         }
     )
 
@@ -106,9 +120,16 @@ def update_receipt(db: Session, user: User, receipt_id: int, data: ReceiptUpdate
     receipt, member = _load(db, user, receipt_id, lock=True)
     if not _is_uploader(receipt, member):
         raise Forbidden("Chỉ người tải hóa đơn lên mới được sửa thông tin hóa đơn")
-    _require_draft(receipt)
-    for field, value in data.model_dump(exclude_unset=True).items():
+    _require_editable(receipt)
+    changes = data.model_dump(exclude_unset=True)
+    split_fields = {"subtotal", "tax_amount", "service_fee", "total_amount"}
+    split_inputs_changed = any(
+        field in split_fields and getattr(receipt, field) != value
+        for field, value in changes.items()
+    )
+    for field, value in changes.items():
         setattr(receipt, field, value)
+    _reopen_if_split_inputs_changed(receipt, split_inputs_changed)
     db.commit()
     return _detail(db, receipt, member)
 
@@ -118,7 +139,7 @@ def _load_for_item_edit(db: Session, user: User, receipt_id: int) -> Receipt:
     receipt, member = _load(db, user, receipt_id, lock=True)
     if not _is_uploader_or_leader(receipt, member):
         raise Forbidden("Chỉ người tải lên hoặc trưởng nhóm mới được sửa dòng món")
-    _require_draft(receipt)
+    _require_editable(receipt)
     return receipt
 
 
@@ -139,6 +160,7 @@ def add_item(db: Session, user: User, receipt_id: int, data: ItemCreate) -> Item
         line_total=_resolve_line_total(data.quantity, data.unit_price, data.line_total),
     )
     db.add(item)
+    _reopen_if_split_inputs_changed(receipt, True)
     db.commit()
     db.refresh(item)
     return ItemOut.model_validate(item)
@@ -151,13 +173,18 @@ def update_item(db: Session, user: User, receipt_id: int, item_id: int, data: It
     if "item_name" in changes and changes["item_name"] is None:
         raise Unprocessable("Tên món không được để trống", details=[{"field": "item_name", "message": "Bắt buộc"}])
 
+    split_inputs_changed = False
     if {"quantity", "unit_price", "line_total"} & changes.keys():
         quantity = changes.get("quantity") or item.quantity
         unit_price = changes["unit_price"] if changes.get("unit_price") is not None else item.unit_price
-        item.line_total = _resolve_line_total(quantity, unit_price, changes.get("line_total"))
+        line_total = _resolve_line_total(quantity, unit_price, changes.get("line_total"))
+        split_inputs_changed = (quantity, unit_price, line_total) != (item.quantity, item.unit_price, item.line_total)
+        item.line_total = line_total
         item.quantity, item.unit_price = quantity, unit_price
     if "item_name" in changes:
+        split_inputs_changed = split_inputs_changed or changes["item_name"] != item.item_name
         item.item_name = changes["item_name"]
+    _reopen_if_split_inputs_changed(receipt, split_inputs_changed)
     db.commit()
     db.refresh(item)
     return ItemOut.model_validate(item)
@@ -165,7 +192,9 @@ def update_item(db: Session, user: User, receipt_id: int, item_id: int, data: It
 
 def delete_item(db: Session, user: User, receipt_id: int, item_id: int) -> None:
     receipt = _load_for_item_edit(db, user, receipt_id)
-    db.delete(_get_item(db, receipt.id, item_id))
+    item = _get_item(db, receipt.id, item_id)
+    _reopen_if_split_inputs_changed(receipt, True)
+    db.delete(item)
     db.commit()
 
 
@@ -178,15 +207,19 @@ def verify_receipt(db: Session, user: User, receipt_id: int, data: VerifyIn) -> 
 
     errors: list[dict] = []
 
-    payer = db.scalar(
-        select(GroupMember).where(
-            GroupMember.group_id == receipt.group_id,
-            GroupMember.user_id == data.payer_id,
-            GroupMember.status == "ACTIVE",
+    if receipt.group_id is None:
+        if data.payer_id != user.id:
+            errors.append({"field": "payer_id", "message": "Hóa đơn cá nhân chỉ có thể chọn chủ tài khoản làm người trả tiền"})
+    else:
+        payer = db.scalar(
+            select(GroupMember).where(
+                GroupMember.group_id == receipt.group_id,
+                GroupMember.user_id == data.payer_id,
+                GroupMember.status == "ACTIVE",
+            )
         )
-    )
-    if payer is None:
-        errors.append({"field": "payer_id", "message": "Người trả tiền phải là thành viên đang hoạt động của nhóm"})
+        if payer is None:
+            errors.append({"field": "payer_id", "message": "Người trả tiền phải là thành viên đang hoạt động của nhóm"})
 
     items = _items(db, receipt.id)
     if not items:
@@ -230,8 +263,7 @@ def verify_receipt(db: Session, user: User, receipt_id: int, data: VerifyIn) -> 
 
 
 # ---------- Tải ảnh hóa đơn (tạo bản nháp, chờ OCR) ----------
-def create_receipt(db: Session, user: User, group_id: int, image: bytes) -> Receipt:
-    get_group_membership(db, group_id, user.id)  # 404 / 403
+def _create_receipt(db: Session, user: User, image: bytes, group_id: int | None) -> Receipt:
     if not image:
         raise BadRequest("Ảnh hóa đơn không được để trống")
     # Kiểm tra bằng chữ ký file (magic bytes), không tin content-type/tên file do client gửi
@@ -263,6 +295,15 @@ def create_receipt(db: Session, user: User, group_id: int, image: bytes) -> Rece
         raise
     db.refresh(receipt)
     return receipt
+
+
+def create_receipt(db: Session, user: User, group_id: int, image: bytes) -> Receipt:
+    get_group_membership(db, group_id, user.id)  # 404 / 403
+    return _create_receipt(db, user, image, group_id)
+
+
+def create_personal_receipt(db: Session, user: User, image: bytes) -> Receipt:
+    return _create_receipt(db, user, image, None)
 
 
 # ---------- Chốt VERIFIED -> SETTLED ----------

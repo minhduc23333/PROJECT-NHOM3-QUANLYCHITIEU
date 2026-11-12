@@ -34,7 +34,8 @@ def process_receipt(db: Session, user: User, receipt_id: int) -> tuple[Receipt, 
     receipt = db.get(Receipt, receipt_id)
     if receipt is None:
         raise NotFound("Không tìm thấy hóa đơn")
-    get_group_membership(db, receipt.group_id, user.id)          # 404 / 403
+    if receipt.group_id is not None:
+        get_group_membership(db, receipt.group_id, user.id)       # 404 / 403
     if receipt.uploaded_by != user.id:
         raise Forbidden("Chỉ người tải hóa đơn mới được chạy OCR")
     if receipt.status != "DRAFT":
