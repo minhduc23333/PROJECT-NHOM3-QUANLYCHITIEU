@@ -293,14 +293,17 @@ def test_verify_ok_sets_payer_and_status(client, setup):
     r = _verify(client, setup, payer="O", who="L")  # Leader xác nhận, O là người trả
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "VERIFIED" and r.json()["payer_id"] == setup["uid"]["O"]
-    assert r.json()["can_edit_items"] is False
-    # Sau khi xác nhận: không sửa được nữa, không xác nhận lại được
-    assert _item(client, setup).status_code == 409
-    assert client.patch(f"/api/receipts/{setup['rid']}", json={"merchant_name": "Z"}, headers=setup["h"]["U"]).status_code == 409
+    assert r.json()["can_edit_items"] is True  # VERIFIED vẫn sửa được (sẽ quay về DRAFT nếu ảnh hưởng chia tiền)
+    # Đã VERIFIED thì không xác nhận lại được
     assert _verify(client, setup).status_code == 409
     # Dashboard bắt đầu có số liệu cho người trả
     s = client.get("/api/dashboard/summary", headers=setup["h"]["O"]).json()
     assert Decimal(s["total_spent"]) == Decimal("105000")
+    # Sửa thông tin không ảnh hưởng chia tiền: vẫn VERIFIED; thêm món: quay về DRAFT
+    url = f"/api/receipts/{setup['rid']}"
+    assert client.patch(url, json={"merchant_name": "Z"}, headers=setup["h"]["U"]).json()["status"] == "VERIFIED"
+    assert _item(client, setup).status_code == 201
+    assert client.get(url, headers=setup["h"]["U"]).json()["status"] == "DRAFT"
 
 
 def test_verify_wrong_total_422_stays_draft(client, setup):

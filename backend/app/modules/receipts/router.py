@@ -1,11 +1,10 @@
 from typing import Annotated
 
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, File, Response, UploadFile, status
 
-from app.core.config import settings
 from app.core.deps import DB, CurrentUser
 from app.core.errors import COMMON_ERRORS, ErrorResponse
-from app.modules.receipts import service
+from app.modules.receipts import service, uploads
 from app.modules.receipts.schemas import (
     ItemCreate,
     ItemOut,
@@ -32,12 +31,19 @@ def list_receipts(group_id: int, db: DB, user: CurrentUser):
     response_model=ReceiptOut,
     status_code=status.HTTP_201_CREATED,
     summary="Tải ảnh hóa đơn (tạo bản nháp DRAFT, ocr_status=PENDING)",
+    description=(
+        "Chỉ nhận JPG/PNG ≤ `MAX_UPLOAD_MB` (mặc định 5 MB). Loại file kiểm tra bằng magic bytes, "
+        "không tin content-type/tên file client gửi. Người tải lên phải là thành viên ACTIVE của nhóm. "
+        "Hóa đơn DRAFT được tạo trước; OCR chạy riêng qua `POST /api/ocr/receipts/{id}`."
+    ),
+    responses={
+        400: {"model": ErrorResponse, "description": "File rỗng / không phải JPG, PNG hợp lệ"},
+        413: {"model": ErrorResponse, "description": "Ảnh vượt giới hạn dung lượng"},
+    },
 )
 async def upload_receipt(group_id: int, db: DB, user: CurrentUser, file: Annotated[UploadFile, File()]):
-    limit = settings.MAX_UPLOAD_MB * 1024 * 1024
-    image = await file.read(limit + 1)
-    if len(image) > limit:
-        raise HTTPException(status_code=413, detail=f"Ảnh không được vượt quá {settings.MAX_UPLOAD_MB} MB")
+    service.require_upload_access(db, user, group_id)  # kiểm tra thành viên ACTIVE trước khi đọc file
+    image = await uploads.read_limited(file)           # 413 nếu > MAX_UPLOAD_MB
     return service.create_receipt(db, user, group_id, image)
 
 
@@ -48,10 +54,7 @@ async def upload_receipt(group_id: int, db: DB, user: CurrentUser, file: Annotat
     summary="Tải ảnh hóa đơn cá nhân (không cần nhóm, chỉ chủ tài khoản xem được)",
 )
 async def upload_personal_receipt(db: DB, user: CurrentUser, file: Annotated[UploadFile, File()]):
-    limit = settings.MAX_UPLOAD_MB * 1024 * 1024
-    image = await file.read(limit + 1)
-    if len(image) > limit:
-        raise HTTPException(status_code=413, detail=f"Ảnh không được vượt quá {settings.MAX_UPLOAD_MB} MB")
+    image = await uploads.read_limited(file)
     return service.create_personal_receipt(db, user, image)
 
 
@@ -60,7 +63,12 @@ def get_receipt(receipt_id: int, db: DB, user: CurrentUser):
     return service.get_receipt(db, user, receipt_id)
 
 
-@router.patch("/receipts/{receipt_id}", response_model=ReceiptDetail, summary="Sửa thông tin hóa đơn / kết quả OCR (người tải lên)")
+@router.patch(
+    "/receipts/{receipt_id}",
+    response_model=ReceiptDetail,
+    summary="Sửa thông tin hóa đơn / kết quả OCR (người tải lên)",
+    description="Đổi tiền (subtotal/thuế/phí/tổng) khi đang VERIFIED → hóa đơn tự quay về DRAFT. SETTLED → 409.",
+)
 def update_receipt(receipt_id: int, data: ReceiptUpdate, db: DB, user: CurrentUser):
     return service.update_receipt(db, user, receipt_id, data)
 

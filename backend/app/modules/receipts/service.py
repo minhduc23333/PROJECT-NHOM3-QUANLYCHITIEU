@@ -1,14 +1,13 @@
 from decimal import ROUND_HALF_UP, Decimal
-from pathlib import Path
-from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
+from app.core.config import settings  # noqa: F401  (test monkeypatch service.settings.UPLOAD_DIR)
 from app.core.deps import get_group_membership
-from app.core.errors import BadRequest, Conflict, Forbidden, NotFound, Unprocessable
+from app.core.errors import Conflict, Forbidden, NotFound, Unprocessable
 from app.models import GroupMember, Receipt, ReceiptItem, User
+from app.modules.receipts import state, uploads
 from app.modules.receipts.schemas import (
     ItemCreate,
     ItemOut,
@@ -20,7 +19,10 @@ from app.modules.receipts.schemas import (
 
 # Quyền: xem = thành viên ACTIVE; sửa thông tin = người tải lên;
 # thêm/sửa/xóa dòng món + xác nhận + chốt = người tải lên hoặc LEADER.
-# Luồng trạng thái: DRAFT --verify--> VERIFIED --settle--> SETTLED. Upload ảnh -> OCR (module ocr) tạo bản nháp.
+# Luồng trạng thái (xem state.py): DRAFT --verify--> VERIFIED --settle--> SETTLED.
+#   - Sửa dữ liệu ảnh hưởng chia tiền khi VERIFIED -> tự quay về DRAFT.
+#   - SETTLED: khóa mọi thao tác sửa (409, code RECEIPT_SETTLED).
+# Upload ảnh -> tạo DRAFT (ocr_status=PENDING) -> OCR (module ocr) điền dữ liệu.
 
 def list_group_receipts(db: Session, user: User, group_id: int) -> list[Receipt]:
     get_group_membership(db, group_id, user.id)  # 404 / 403
@@ -60,18 +62,10 @@ def _is_uploader_or_leader(receipt: Receipt, member: GroupMember | None) -> bool
 
 
 def _require_draft(receipt: Receipt) -> None:
-    if receipt.status != "DRAFT":
-        raise Conflict("Hóa đơn đã được xác nhận, không thể chỉnh sửa")
-
-
-def _require_editable(receipt: Receipt) -> None:
-    if receipt.status == "SETTLED":
-        raise Conflict("Hóa đơn đã chốt, không thể chỉnh sửa")
-
-
-def _reopen_if_split_inputs_changed(receipt: Receipt, changed: bool) -> None:
-    if changed and receipt.status == "VERIFIED":
-        receipt.status = "DRAFT"
+    """Chỉ DRAFT mới xác nhận được (VERIFIED: đã xác nhận rồi; SETTLED: đã chốt)."""
+    state.require_not_settled(receipt)
+    if receipt.status != state.DRAFT:
+        raise Conflict("Hóa đơn đã được xác nhận", code=state.ERR_BAD_TRANSITION)
 
 
 def _expected_line_total(quantity: Decimal, unit_price: Decimal) -> Decimal:
@@ -99,11 +93,14 @@ def _items(db: Session, receipt_id: int) -> list[ReceiptItem]:
 
 def _detail(db: Session, receipt: Receipt, member: GroupMember | None) -> ReceiptDetail:
     items = _items(db, receipt.id)
-    editable = receipt.status != "SETTLED"
+    editable = not state.is_settled(receipt)
     return ReceiptDetail.model_validate(receipt).model_copy(
         update={
             "items": [ItemOut.model_validate(i) for i in items],
             "items_total": sum((i.line_total for i in items), ZERO),
+            "is_locked": not editable,
+            "can_verify": receipt.status == state.DRAFT and _is_uploader_or_leader(receipt, member),
+            "can_settle": receipt.status == state.VERIFIED and _is_uploader_or_leader(receipt, member),
             "can_edit_receipt": editable and _is_uploader(receipt, member),
             "can_edit_items": editable and _is_uploader_or_leader(receipt, member),
         }
@@ -120,16 +117,15 @@ def update_receipt(db: Session, user: User, receipt_id: int, data: ReceiptUpdate
     receipt, member = _load(db, user, receipt_id, lock=True)
     if not _is_uploader(receipt, member):
         raise Forbidden("Chỉ người tải hóa đơn lên mới được sửa thông tin hóa đơn")
-    _require_editable(receipt)
+    state.require_not_settled(receipt)
     changes = data.model_dump(exclude_unset=True)
-    split_fields = {"subtotal", "tax_amount", "service_fee", "total_amount"}
     split_inputs_changed = any(
-        field in split_fields and getattr(receipt, field) != value
+        field in state.SPLIT_FIELDS and getattr(receipt, field) != value
         for field, value in changes.items()
     )
     for field, value in changes.items():
         setattr(receipt, field, value)
-    _reopen_if_split_inputs_changed(receipt, split_inputs_changed)
+    state.reopen_if_split_inputs_changed(db, receipt, split_inputs_changed)
     db.commit()
     return _detail(db, receipt, member)
 
@@ -139,7 +135,7 @@ def _load_for_item_edit(db: Session, user: User, receipt_id: int) -> Receipt:
     receipt, member = _load(db, user, receipt_id, lock=True)
     if not _is_uploader_or_leader(receipt, member):
         raise Forbidden("Chỉ người tải lên hoặc trưởng nhóm mới được sửa dòng món")
-    _require_editable(receipt)
+    state.require_not_settled(receipt)
     return receipt
 
 
@@ -160,7 +156,7 @@ def add_item(db: Session, user: User, receipt_id: int, data: ItemCreate) -> Item
         line_total=_resolve_line_total(data.quantity, data.unit_price, data.line_total),
     )
     db.add(item)
-    _reopen_if_split_inputs_changed(receipt, True)
+    state.reopen_if_split_inputs_changed(db, receipt, True)
     db.commit()
     db.refresh(item)
     return ItemOut.model_validate(item)
@@ -184,7 +180,7 @@ def update_item(db: Session, user: User, receipt_id: int, item_id: int, data: It
     if "item_name" in changes:
         split_inputs_changed = split_inputs_changed or changes["item_name"] != item.item_name
         item.item_name = changes["item_name"]
-    _reopen_if_split_inputs_changed(receipt, split_inputs_changed)
+    state.reopen_if_split_inputs_changed(db, receipt, split_inputs_changed)
     db.commit()
     db.refresh(item)
     return ItemOut.model_validate(item)
@@ -193,7 +189,7 @@ def update_item(db: Session, user: User, receipt_id: int, item_id: int, data: It
 def delete_item(db: Session, user: User, receipt_id: int, item_id: int) -> None:
     receipt = _load_for_item_edit(db, user, receipt_id)
     item = _get_item(db, receipt.id, item_id)
-    _reopen_if_split_inputs_changed(receipt, True)
+    state.reopen_if_split_inputs_changed(db, receipt, True)
     db.delete(item)
     db.commit()
 
@@ -253,7 +249,7 @@ def verify_receipt(db: Session, user: User, receipt_id: int, data: VerifyIn) -> 
     # Ghi payer + trạng thái trong cùng 1 transaction (1 commit); lỗi → rollback, vẫn DRAFT
     try:
         receipt.payer_id = data.payer_id
-        receipt.status = "VERIFIED"
+        state.transition(receipt, state.VERIFIED)
         db.commit()
     except Exception:
         db.rollback()
@@ -263,27 +259,21 @@ def verify_receipt(db: Session, user: User, receipt_id: int, data: VerifyIn) -> 
 
 
 # ---------- Tải ảnh hóa đơn (tạo bản nháp, chờ OCR) ----------
+def require_upload_access(db: Session, user: User, group_id: int) -> None:
+    """Người tải lên phải là thành viên ACTIVE của nhóm (404 nhóm không tồn tại / 403)."""
+    get_group_membership(db, group_id, user.id)
+
+
 def _create_receipt(db: Session, user: User, image: bytes, group_id: int | None) -> Receipt:
-    if not image:
-        raise BadRequest("Ảnh hóa đơn không được để trống")
-    # Kiểm tra bằng chữ ký file (magic bytes), không tin content-type/tên file do client gửi
-    if image.startswith(b"\xff\xd8\xff"):
-        extension = ".jpg"
-    elif image.startswith(b"\x89PNG\r\n\x1a\n"):
-        extension = ".png"
-    else:
-        raise BadRequest("Chỉ chấp nhận ảnh JPG hoặc PNG hợp lệ")
+    extension = uploads.validate_image(image)  # 400 nếu rỗng / sai magic bytes
+    image_path = uploads.save_image(image, extension)
 
-    upload_dir = Path(settings.UPLOAD_DIR)
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    image_path = upload_dir / f"{uuid4().hex}{extension}"
-    image_path.write_bytes(image)
-
+    # Tạo DRAFT + ocr_status=PENDING TRƯỚC; OCR chạy sau qua POST /api/ocr/receipts/{id}
     receipt = Receipt(
         group_id=group_id,
         uploaded_by=user.id,
         image_path=str(image_path),
-        status="DRAFT",
+        status=state.DRAFT,
         ocr_status="PENDING",
     )
     try:
@@ -298,7 +288,7 @@ def _create_receipt(db: Session, user: User, image: bytes, group_id: int | None)
 
 
 def create_receipt(db: Session, user: User, group_id: int, image: bytes) -> Receipt:
-    get_group_membership(db, group_id, user.id)  # 404 / 403
+    require_upload_access(db, user, group_id)
     return _create_receipt(db, user, image, group_id)
 
 
@@ -311,9 +301,11 @@ def settle_receipt(db: Session, user: User, receipt_id: int) -> ReceiptDetail:
     receipt, member = _load(db, user, receipt_id, lock=True)
     if not _is_uploader_or_leader(receipt, member):
         raise Forbidden("Chỉ người tải lên hoặc trưởng nhóm mới được chốt hóa đơn")
-    if receipt.status != "VERIFIED":
+    if receipt.status != state.VERIFIED:
         db.rollback()
-        raise Conflict("Chỉ hóa đơn VERIFIED mới có thể chốt")
-    receipt.status = "SETTLED"
+        if state.is_settled(receipt):
+            raise Conflict("Hóa đơn đã được chốt", code=state.ERR_SETTLED)
+        raise Conflict("Chỉ hóa đơn VERIFIED mới có thể chốt", code=state.ERR_BAD_TRANSITION)
+    state.transition(receipt, state.SETTLED)
     db.commit()
     return _detail(db, receipt, member)

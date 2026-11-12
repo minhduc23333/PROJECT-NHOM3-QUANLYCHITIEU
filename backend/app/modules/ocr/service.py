@@ -30,6 +30,15 @@ def extract(image_path: str) -> tuple[ParsedReceipt, OcrResult]:
     return parse_receipt(raw.lines), raw
 
 
+def _lock_still_draft(db: Session, receipt: Receipt) -> None:
+    """OCR chạy lâu (tới OCR_TIMEOUT_SEC). Trong lúc đó hóa đơn có thể đã được xác nhận/chốt ở request khác:
+    khóa dòng + đọc lại trạng thái trước khi ghi để không ghi đè hóa đơn đã khóa."""
+    db.refresh(receipt, with_for_update=True)
+    if receipt.status != "DRAFT":
+        db.rollback()
+        raise Conflict("Hóa đơn đã được xác nhận/chốt trong lúc chạy OCR, kết quả OCR bị bỏ qua")
+
+
 def process_receipt(db: Session, user: User, receipt_id: int) -> tuple[Receipt, ParsedReceipt | None, str | None]:
     receipt = db.get(Receipt, receipt_id)
     if receipt is None:
@@ -47,11 +56,13 @@ def process_receipt(db: Session, user: User, receipt_id: int) -> tuple[Receipt, 
         parsed, raw = extract(receipt.image_path)
     except (OcrError, ImageError) as exc:       # gồm OcrTimeout (là con của OcrError)
         log.warning("OCR thất bại receipt=%s: %s", receipt_id, exc)
+        _lock_still_draft(db, receipt)
         receipt.ocr_status = "FAILED"
         db.commit()
         db.refresh(receipt)
         return receipt, None, None
 
+    _lock_still_draft(db, receipt)
     receipt.ocr_status = parsed.ocr_status
     if parsed.ocr_status == "DONE":
         receipt.merchant_name = parsed.merchant_name

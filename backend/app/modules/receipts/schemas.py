@@ -78,6 +78,9 @@ class ReceiptDetail(ReceiptOut):
     items_total: Decimal = Decimal("0")       # SUM(line_total) thực tế, để UI so với subtotal
     can_edit_receipt: bool = False            # người tải lên, trừ khi SETTLED
     can_edit_items: bool = False              # người tải lên hoặc Leader, trừ khi SETTLED
+    is_locked: bool = False                   # True khi SETTLED: khóa mọi thao tác sửa
+    can_verify: bool = False                  # đang DRAFT và người xem là người tải lên/Leader
+    can_settle: bool = False                  # đang VERIFIED và người xem là người tải lên/Leader
 
 
 class VerifyIn(BaseModel):

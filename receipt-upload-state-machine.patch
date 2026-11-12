@@ -1,0 +1,759 @@
+diff --git a/README.md b/README.md
+index b7d5e1e..82bbc19 100644
+--- a/README.md
++++ b/README.md
+@@ -38,15 +38,20 @@ cd backend && pytest
+ | GET | `/api/auth/me` | Thông tin người dùng hiện tại (header `Authorization: Bearer <token>`) |
+ 
+ | GET | `/api/groups/{id}/receipts` | Danh sách hóa đơn của nhóm |
+-| POST | `/api/groups/{id}/receipts` | Tải ảnh JPG/PNG (≤ 5 MB) → bản nháp `DRAFT`, `ocr_status=PENDING` |
++| POST | `/api/groups/{id}/receipts` | Tải ảnh JPG/PNG (≤ 5 MB, kiểm tra magic bytes, không tin MIME client; người tải phải là thành viên ACTIVE) → bản nháp `DRAFT`, `ocr_status=PENDING`. Sai định dạng → 400, quá cỡ → 413 |
++| POST | `/api/receipts/personal` | Như trên nhưng hóa đơn cá nhân (không cần nhóm) |
+ | POST | `/api/ocr/receipts/{id}` | Chạy OCR + parser, điền merchant/ngày/tiền + dòng món. OCR lỗi vẫn trả 200 với `ocr_status=FAILED` để nhập tay. Chỉ người tải lên |
+ | GET | `/api/receipts/{id}` | Xem bản nháp + dòng món + `items_total` + cờ `can_edit_*` |
+-| PATCH | `/api/receipts/{id}` | Sửa đầu hóa đơn (chỉ người tải lên, chỉ khi `DRAFT`) |
+-| POST / PATCH / DELETE | `/api/receipts/{id}/items[/{item_id}]` | CRUD dòng món (người tải lên hoặc Leader, chỉ khi `DRAFT`); `line_total` tự tính = SL × đơn giá |
++| PATCH | `/api/receipts/{id}` | Sửa đầu hóa đơn (chỉ người tải lên). Đổi tiền khi `VERIFIED` → tự về `DRAFT`; `SETTLED` → 409 |
++| POST / PATCH / DELETE | `/api/receipts/{id}/items[/{item_id}]` | CRUD dòng món (người tải lên hoặc Leader). Khi `VERIFIED` → tự về `DRAFT`; `SETTLED` → 409; `line_total` tự tính = SL × đơn giá |
+ | POST | `/api/receipts/{id}/verify` | Body `{payer_id}`. Tổng tiền khớp → `VERIFIED`; sai → 422 kèm danh sách lỗi |
+ | POST | `/api/receipts/{id}/settle` | `VERIFIED` → `SETTLED` (người tải lên hoặc Leader) |
+ 
+-Luồng: `DRAFT` → verify → `VERIFIED` → settle → `SETTLED`. Sau `VERIFIED` không sửa được nữa (409).
++Luồng: `DRAFT` → verify → `VERIFIED` → settle → `SETTLED` (logic ở `backend/app/modules/receipts/state.py`).
++
++- Sửa dữ liệu ảnh hưởng chia tiền (dòng món, `subtotal`, `tax_amount`, `service_fee`, `total_amount`) khi `VERIFIED` → quay về `DRAFT` và xóa kết quả chia cũ (`split_details`, nợ `OPEN`). Đã có nợ `PAID` thì chặn sửa (409 `RECEIPT_HAS_PAID_DEBT`). Sửa tên quán/ngày/danh mục thì giữ nguyên `VERIFIED`.
++- `SETTLED` khóa mọi thao tác sửa (409, `code = RECEIPT_SETTLED`). Nhảy cóc / xác nhận lại sai trạng thái → 409 `INVALID_STATUS_TRANSITION`.
++- `GET /api/receipts/{id}` trả thêm `is_locked`, `can_verify`, `can_settle` cho UI.
+ 
+ Lỗi luôn có dạng `{"error": {"code", "message", "details"}}`.
+ 
+diff --git a/backend/app/modules/ocr/service.py b/backend/app/modules/ocr/service.py
+index 02adcc8..e8f4c40 100644
+--- a/backend/app/modules/ocr/service.py
++++ b/backend/app/modules/ocr/service.py
+@@ -30,6 +30,15 @@ def extract(image_path: str) -> tuple[ParsedReceipt, OcrResult]:
+     return parse_receipt(raw.lines), raw
+ 
+ 
++def _lock_still_draft(db: Session, receipt: Receipt) -> None:
++    """OCR chạy lâu (tới OCR_TIMEOUT_SEC). Trong lúc đó hóa đơn có thể đã được xác nhận/chốt ở request khác:
++    khóa dòng + đọc lại trạng thái trước khi ghi để không ghi đè hóa đơn đã khóa."""
++    db.refresh(receipt, with_for_update=True)
++    if receipt.status != "DRAFT":
++        db.rollback()
++        raise Conflict("Hóa đơn đã được xác nhận/chốt trong lúc chạy OCR, kết quả OCR bị bỏ qua")
++
++
+ def process_receipt(db: Session, user: User, receipt_id: int) -> tuple[Receipt, ParsedReceipt | None, str | None]:
+     receipt = db.get(Receipt, receipt_id)
+     if receipt is None:
+@@ -47,11 +56,13 @@ def process_receipt(db: Session, user: User, receipt_id: int) -> tuple[Receipt,
+         parsed, raw = extract(receipt.image_path)
+     except (OcrError, ImageError) as exc:       # gồm OcrTimeout (là con của OcrError)
+         log.warning("OCR thất bại receipt=%s: %s", receipt_id, exc)
++        _lock_still_draft(db, receipt)
+         receipt.ocr_status = "FAILED"
+         db.commit()
+         db.refresh(receipt)
+         return receipt, None, None
+ 
++    _lock_still_draft(db, receipt)
+     receipt.ocr_status = parsed.ocr_status
+     if parsed.ocr_status == "DONE":
+         receipt.merchant_name = parsed.merchant_name
+diff --git a/backend/app/modules/receipts/router.py b/backend/app/modules/receipts/router.py
+index 01375e4..bcdfc4a 100644
+--- a/backend/app/modules/receipts/router.py
++++ b/backend/app/modules/receipts/router.py
+@@ -1,11 +1,10 @@
+ from typing import Annotated
+ 
+-from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
++from fastapi import APIRouter, File, Response, UploadFile, status
+ 
+-from app.core.config import settings
+ from app.core.deps import DB, CurrentUser
+ from app.core.errors import COMMON_ERRORS, ErrorResponse
+-from app.modules.receipts import service
++from app.modules.receipts import service, uploads
+ from app.modules.receipts.schemas import (
+     ItemCreate,
+     ItemOut,
+@@ -32,12 +31,19 @@ def list_receipts(group_id: int, db: DB, user: CurrentUser):
+     response_model=ReceiptOut,
+     status_code=status.HTTP_201_CREATED,
+     summary="Tải ảnh hóa đơn (tạo bản nháp DRAFT, ocr_status=PENDING)",
++    description=(
++        "Chỉ nhận JPG/PNG ≤ `MAX_UPLOAD_MB` (mặc định 5 MB). Loại file kiểm tra bằng magic bytes, "
++        "không tin content-type/tên file client gửi. Người tải lên phải là thành viên ACTIVE của nhóm. "
++        "Hóa đơn DRAFT được tạo trước; OCR chạy riêng qua `POST /api/ocr/receipts/{id}`."
++    ),
++    responses={
++        400: {"model": ErrorResponse, "description": "File rỗng / không phải JPG, PNG hợp lệ"},
++        413: {"model": ErrorResponse, "description": "Ảnh vượt giới hạn dung lượng"},
++    },
+ )
+ async def upload_receipt(group_id: int, db: DB, user: CurrentUser, file: Annotated[UploadFile, File()]):
+-    limit = settings.MAX_UPLOAD_MB * 1024 * 1024
+-    image = await file.read(limit + 1)
+-    if len(image) > limit:
+-        raise HTTPException(status_code=413, detail=f"Ảnh không được vượt quá {settings.MAX_UPLOAD_MB} MB")
++    service.require_upload_access(db, user, group_id)  # kiểm tra thành viên ACTIVE trước khi đọc file
++    image = await uploads.read_limited(file)           # 413 nếu > MAX_UPLOAD_MB
+     return service.create_receipt(db, user, group_id, image)
+ 
+ 
+@@ -48,10 +54,7 @@ async def upload_receipt(group_id: int, db: DB, user: CurrentUser, file: Annotat
+     summary="Tải ảnh hóa đơn cá nhân (không cần nhóm, chỉ chủ tài khoản xem được)",
+ )
+ async def upload_personal_receipt(db: DB, user: CurrentUser, file: Annotated[UploadFile, File()]):
+-    limit = settings.MAX_UPLOAD_MB * 1024 * 1024
+-    image = await file.read(limit + 1)
+-    if len(image) > limit:
+-        raise HTTPException(status_code=413, detail=f"Ảnh không được vượt quá {settings.MAX_UPLOAD_MB} MB")
++    image = await uploads.read_limited(file)
+     return service.create_personal_receipt(db, user, image)
+ 
+ 
+@@ -60,7 +63,12 @@ def get_receipt(receipt_id: int, db: DB, user: CurrentUser):
+     return service.get_receipt(db, user, receipt_id)
+ 
+ 
+-@router.patch("/receipts/{receipt_id}", response_model=ReceiptDetail, summary="Sửa thông tin hóa đơn / kết quả OCR (người tải lên)")
++@router.patch(
++    "/receipts/{receipt_id}",
++    response_model=ReceiptDetail,
++    summary="Sửa thông tin hóa đơn / kết quả OCR (người tải lên)",
++    description="Đổi tiền (subtotal/thuế/phí/tổng) khi đang VERIFIED → hóa đơn tự quay về DRAFT. SETTLED → 409.",
++)
+ def update_receipt(receipt_id: int, data: ReceiptUpdate, db: DB, user: CurrentUser):
+     return service.update_receipt(db, user, receipt_id, data)
+ 
+diff --git a/backend/app/modules/receipts/schemas.py b/backend/app/modules/receipts/schemas.py
+index 42e1427..f3d29d8 100644
+--- a/backend/app/modules/receipts/schemas.py
++++ b/backend/app/modules/receipts/schemas.py
+@@ -78,6 +78,9 @@ class ReceiptDetail(ReceiptOut):
+     items_total: Decimal = Decimal("0")       # SUM(line_total) thực tế, để UI so với subtotal
+     can_edit_receipt: bool = False            # người tải lên, trừ khi SETTLED
+     can_edit_items: bool = False              # người tải lên hoặc Leader, trừ khi SETTLED
++    is_locked: bool = False                   # True khi SETTLED: khóa mọi thao tác sửa
++    can_verify: bool = False                  # đang DRAFT và người xem là người tải lên/Leader
++    can_settle: bool = False                  # đang VERIFIED và người xem là người tải lên/Leader
+ 
+ 
+ class VerifyIn(BaseModel):
+diff --git a/backend/app/modules/receipts/service.py b/backend/app/modules/receipts/service.py
+index 9501c03..80366dd 100644
+--- a/backend/app/modules/receipts/service.py
++++ b/backend/app/modules/receipts/service.py
+@@ -1,14 +1,13 @@
+ from decimal import ROUND_HALF_UP, Decimal
+-from pathlib import Path
+-from uuid import uuid4
+ 
+ from sqlalchemy import select
+ from sqlalchemy.orm import Session
+ 
+-from app.core.config import settings
++from app.core.config import settings  # noqa: F401  (test monkeypatch service.settings.UPLOAD_DIR)
+ from app.core.deps import get_group_membership
+-from app.core.errors import BadRequest, Conflict, Forbidden, NotFound, Unprocessable
++from app.core.errors import Conflict, Forbidden, NotFound, Unprocessable
+ from app.models import GroupMember, Receipt, ReceiptItem, User
++from app.modules.receipts import state, uploads
+ from app.modules.receipts.schemas import (
+     ItemCreate,
+     ItemOut,
+@@ -20,7 +19,10 @@ from app.modules.receipts.schemas import (
+ 
+ # Quyền: xem = thành viên ACTIVE; sửa thông tin = người tải lên;
+ # thêm/sửa/xóa dòng món + xác nhận + chốt = người tải lên hoặc LEADER.
+-# Luồng trạng thái: DRAFT --verify--> VERIFIED --settle--> SETTLED. Upload ảnh -> OCR (module ocr) tạo bản nháp.
++# Luồng trạng thái (xem state.py): DRAFT --verify--> VERIFIED --settle--> SETTLED.
++#   - Sửa dữ liệu ảnh hưởng chia tiền khi VERIFIED -> tự quay về DRAFT.
++#   - SETTLED: khóa mọi thao tác sửa (409, code RECEIPT_SETTLED).
++# Upload ảnh -> tạo DRAFT (ocr_status=PENDING) -> OCR (module ocr) điền dữ liệu.
+ 
+ def list_group_receipts(db: Session, user: User, group_id: int) -> list[Receipt]:
+     get_group_membership(db, group_id, user.id)  # 404 / 403
+@@ -60,18 +62,10 @@ def _is_uploader_or_leader(receipt: Receipt, member: GroupMember | None) -> bool
+ 
+ 
+ def _require_draft(receipt: Receipt) -> None:
+-    if receipt.status != "DRAFT":
+-        raise Conflict("Hóa đơn đã được xác nhận, không thể chỉnh sửa")
+-
+-
+-def _require_editable(receipt: Receipt) -> None:
+-    if receipt.status == "SETTLED":
+-        raise Conflict("Hóa đơn đã chốt, không thể chỉnh sửa")
+-
+-
+-def _reopen_if_split_inputs_changed(receipt: Receipt, changed: bool) -> None:
+-    if changed and receipt.status == "VERIFIED":
+-        receipt.status = "DRAFT"
++    """Chỉ DRAFT mới xác nhận được (VERIFIED: đã xác nhận rồi; SETTLED: đã chốt)."""
++    state.require_not_settled(receipt)
++    if receipt.status != state.DRAFT:
++        raise Conflict("Hóa đơn đã được xác nhận", code=state.ERR_BAD_TRANSITION)
+ 
+ 
+ def _expected_line_total(quantity: Decimal, unit_price: Decimal) -> Decimal:
+@@ -99,11 +93,14 @@ def _items(db: Session, receipt_id: int) -> list[ReceiptItem]:
+ 
+ def _detail(db: Session, receipt: Receipt, member: GroupMember | None) -> ReceiptDetail:
+     items = _items(db, receipt.id)
+-    editable = receipt.status != "SETTLED"
++    editable = not state.is_settled(receipt)
+     return ReceiptDetail.model_validate(receipt).model_copy(
+         update={
+             "items": [ItemOut.model_validate(i) for i in items],
+             "items_total": sum((i.line_total for i in items), ZERO),
++            "is_locked": not editable,
++            "can_verify": receipt.status == state.DRAFT and _is_uploader_or_leader(receipt, member),
++            "can_settle": receipt.status == state.VERIFIED and _is_uploader_or_leader(receipt, member),
+             "can_edit_receipt": editable and _is_uploader(receipt, member),
+             "can_edit_items": editable and _is_uploader_or_leader(receipt, member),
+         }
+@@ -120,16 +117,15 @@ def update_receipt(db: Session, user: User, receipt_id: int, data: ReceiptUpdate
+     receipt, member = _load(db, user, receipt_id, lock=True)
+     if not _is_uploader(receipt, member):
+         raise Forbidden("Chỉ người tải hóa đơn lên mới được sửa thông tin hóa đơn")
+-    _require_editable(receipt)
++    state.require_not_settled(receipt)
+     changes = data.model_dump(exclude_unset=True)
+-    split_fields = {"subtotal", "tax_amount", "service_fee", "total_amount"}
+     split_inputs_changed = any(
+-        field in split_fields and getattr(receipt, field) != value
++        field in state.SPLIT_FIELDS and getattr(receipt, field) != value
+         for field, value in changes.items()
+     )
+     for field, value in changes.items():
+         setattr(receipt, field, value)
+-    _reopen_if_split_inputs_changed(receipt, split_inputs_changed)
++    state.reopen_if_split_inputs_changed(db, receipt, split_inputs_changed)
+     db.commit()
+     return _detail(db, receipt, member)
+ 
+@@ -139,7 +135,7 @@ def _load_for_item_edit(db: Session, user: User, receipt_id: int) -> Receipt:
+     receipt, member = _load(db, user, receipt_id, lock=True)
+     if not _is_uploader_or_leader(receipt, member):
+         raise Forbidden("Chỉ người tải lên hoặc trưởng nhóm mới được sửa dòng món")
+-    _require_editable(receipt)
++    state.require_not_settled(receipt)
+     return receipt
+ 
+ 
+@@ -160,7 +156,7 @@ def add_item(db: Session, user: User, receipt_id: int, data: ItemCreate) -> Item
+         line_total=_resolve_line_total(data.quantity, data.unit_price, data.line_total),
+     )
+     db.add(item)
+-    _reopen_if_split_inputs_changed(receipt, True)
++    state.reopen_if_split_inputs_changed(db, receipt, True)
+     db.commit()
+     db.refresh(item)
+     return ItemOut.model_validate(item)
+@@ -184,7 +180,7 @@ def update_item(db: Session, user: User, receipt_id: int, item_id: int, data: It
+     if "item_name" in changes:
+         split_inputs_changed = split_inputs_changed or changes["item_name"] != item.item_name
+         item.item_name = changes["item_name"]
+-    _reopen_if_split_inputs_changed(receipt, split_inputs_changed)
++    state.reopen_if_split_inputs_changed(db, receipt, split_inputs_changed)
+     db.commit()
+     db.refresh(item)
+     return ItemOut.model_validate(item)
+@@ -193,7 +189,7 @@ def update_item(db: Session, user: User, receipt_id: int, item_id: int, data: It
+ def delete_item(db: Session, user: User, receipt_id: int, item_id: int) -> None:
+     receipt = _load_for_item_edit(db, user, receipt_id)
+     item = _get_item(db, receipt.id, item_id)
+-    _reopen_if_split_inputs_changed(receipt, True)
++    state.reopen_if_split_inputs_changed(db, receipt, True)
+     db.delete(item)
+     db.commit()
+ 
+@@ -253,7 +249,7 @@ def verify_receipt(db: Session, user: User, receipt_id: int, data: VerifyIn) ->
+     # Ghi payer + trạng thái trong cùng 1 transaction (1 commit); lỗi → rollback, vẫn DRAFT
+     try:
+         receipt.payer_id = data.payer_id
+-        receipt.status = "VERIFIED"
++        state.transition(receipt, state.VERIFIED)
+         db.commit()
+     except Exception:
+         db.rollback()
+@@ -263,27 +259,21 @@ def verify_receipt(db: Session, user: User, receipt_id: int, data: VerifyIn) ->
+ 
+ 
+ # ---------- Tải ảnh hóa đơn (tạo bản nháp, chờ OCR) ----------
+-def _create_receipt(db: Session, user: User, image: bytes, group_id: int | None) -> Receipt:
+-    if not image:
+-        raise BadRequest("Ảnh hóa đơn không được để trống")
+-    # Kiểm tra bằng chữ ký file (magic bytes), không tin content-type/tên file do client gửi
+-    if image.startswith(b"\xff\xd8\xff"):
+-        extension = ".jpg"
+-    elif image.startswith(b"\x89PNG\r\n\x1a\n"):
+-        extension = ".png"
+-    else:
+-        raise BadRequest("Chỉ chấp nhận ảnh JPG hoặc PNG hợp lệ")
++def require_upload_access(db: Session, user: User, group_id: int) -> None:
++    """Người tải lên phải là thành viên ACTIVE của nhóm (404 nhóm không tồn tại / 403)."""
++    get_group_membership(db, group_id, user.id)
++
+ 
+-    upload_dir = Path(settings.UPLOAD_DIR)
+-    upload_dir.mkdir(parents=True, exist_ok=True)
+-    image_path = upload_dir / f"{uuid4().hex}{extension}"
+-    image_path.write_bytes(image)
++def _create_receipt(db: Session, user: User, image: bytes, group_id: int | None) -> Receipt:
++    extension = uploads.validate_image(image)  # 400 nếu rỗng / sai magic bytes
++    image_path = uploads.save_image(image, extension)
+ 
++    # Tạo DRAFT + ocr_status=PENDING TRƯỚC; OCR chạy sau qua POST /api/ocr/receipts/{id}
+     receipt = Receipt(
+         group_id=group_id,
+         uploaded_by=user.id,
+         image_path=str(image_path),
+-        status="DRAFT",
++        status=state.DRAFT,
+         ocr_status="PENDING",
+     )
+     try:
+@@ -298,7 +288,7 @@ def _create_receipt(db: Session, user: User, image: bytes, group_id: int | None)
+ 
+ 
+ def create_receipt(db: Session, user: User, group_id: int, image: bytes) -> Receipt:
+-    get_group_membership(db, group_id, user.id)  # 404 / 403
++    require_upload_access(db, user, group_id)
+     return _create_receipt(db, user, image, group_id)
+ 
+ 
+@@ -311,9 +301,11 @@ def settle_receipt(db: Session, user: User, receipt_id: int) -> ReceiptDetail:
+     receipt, member = _load(db, user, receipt_id, lock=True)
+     if not _is_uploader_or_leader(receipt, member):
+         raise Forbidden("Chỉ người tải lên hoặc trưởng nhóm mới được chốt hóa đơn")
+-    if receipt.status != "VERIFIED":
++    if receipt.status != state.VERIFIED:
+         db.rollback()
+-        raise Conflict("Chỉ hóa đơn VERIFIED mới có thể chốt")
+-    receipt.status = "SETTLED"
++        if state.is_settled(receipt):
++            raise Conflict("Hóa đơn đã được chốt", code=state.ERR_SETTLED)
++        raise Conflict("Chỉ hóa đơn VERIFIED mới có thể chốt", code=state.ERR_BAD_TRANSITION)
++    state.transition(receipt, state.SETTLED)
+     db.commit()
+     return _detail(db, receipt, member)
+diff --git a/backend/app/modules/receipts/state.py b/backend/app/modules/receipts/state.py
+new file mode 100644
+index 0000000..7ee6853
+--- /dev/null
++++ b/backend/app/modules/receipts/state.py
+@@ -0,0 +1,75 @@
++"""Máy trạng thái của hóa đơn: DRAFT → VERIFIED → SETTLED.
++
++    DRAFT ──verify──▶ VERIFIED ──settle──▶ SETTLED (khóa vĩnh viễn)
++      ▲                  │
++      └── sửa dữ liệu ───┘   (đổi thứ ảnh hưởng chia tiền → tự quay về DRAFT)
++
++Mọi thay đổi `receipt.status` PHẢI đi qua `transition()` để không ai nhảy cóc
++(vd DRAFT → SETTLED) hoặc mở lại hóa đơn đã chốt.
++"""
++from __future__ import annotations
++
++from sqlalchemy import delete, select
++from sqlalchemy.orm import Session
++
++from app.core.errors import Conflict
++from app.models import Debt, Receipt, SplitDetail
++
++DRAFT = "DRAFT"
++VERIFIED = "VERIFIED"
++SETTLED = "SETTLED"
++
++ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
++    DRAFT: frozenset({VERIFIED}),
++    VERIFIED: frozenset({DRAFT, SETTLED}),
++    SETTLED: frozenset(),  # trạng thái cuối
++}
++
++# Các trường đầu hóa đơn làm thay đổi kết quả chia tiền. merchant/ngày/category thì không.
++SPLIT_FIELDS = frozenset({"subtotal", "tax_amount", "service_fee", "total_amount"})
++
++ERR_SETTLED = "RECEIPT_SETTLED"
++ERR_BAD_TRANSITION = "INVALID_STATUS_TRANSITION"
++ERR_HAS_PAID_DEBT = "RECEIPT_HAS_PAID_DEBT"
++
++
++def is_settled(receipt: Receipt) -> bool:
++    return receipt.status == SETTLED
++
++
++def require_not_settled(receipt: Receipt) -> None:
++    """Khóa sau chốt: mọi thao tác sửa dữ liệu hóa đơn đều gọi hàm này đầu tiên."""
++    if is_settled(receipt):
++        raise Conflict("Hóa đơn đã chốt, không thể chỉnh sửa", code=ERR_SETTLED)
++
++
++def transition(receipt: Receipt, target: str, *, message: str | None = None) -> None:
++    """Đổi trạng thái nếu hợp lệ, ngược lại 409. Không commit — người gọi tự commit."""
++    if target not in ALLOWED_TRANSITIONS.get(receipt.status, frozenset()):
++        if is_settled(receipt):
++            raise Conflict("Hóa đơn đã chốt, không thể chỉnh sửa", code=ERR_SETTLED)
++        raise Conflict(
++            message or f"Không thể chuyển hóa đơn từ {receipt.status} sang {target}",
++            code=ERR_BAD_TRANSITION,
++        )
++    receipt.status = target
++
++
++def reopen_if_split_inputs_changed(db: Session, receipt: Receipt, changed: bool) -> None:
++    """Dữ liệu ảnh hưởng chia tiền đổi khi đang VERIFIED → về DRAFT để xác nhận lại.
++
++    Kết quả chia cũ (split_details + nợ OPEN) không còn đúng nên bị xóa theo.
++    Nếu đã có khoản nợ PAID thì không cho sửa (số tiền đã được trả không thể đổi âm thầm).
++    """
++    if not changed or receipt.status != VERIFIED:
++        return
++    paid = db.scalar(select(Debt.id).where(Debt.receipt_id == receipt.id, Debt.status == "PAID").limit(1))
++    if paid is not None:
++        db.rollback()  # bỏ các thay đổi chưa commit + nhả khóa dòng
++        raise Conflict(
++            "Hóa đơn đã có khoản nợ được thanh toán, không thể sửa dữ liệu chia tiền",
++            code=ERR_HAS_PAID_DEBT,
++        )
++    db.execute(delete(Debt).where(Debt.receipt_id == receipt.id, Debt.status == "OPEN"))
++    db.execute(delete(SplitDetail).where(SplitDetail.receipt_id == receipt.id))
++    transition(receipt, DRAFT)
+diff --git a/backend/app/modules/receipts/uploads.py b/backend/app/modules/receipts/uploads.py
+new file mode 100644
+index 0000000..e4928b5
+--- /dev/null
++++ b/backend/app/modules/receipts/uploads.py
+@@ -0,0 +1,65 @@
++"""Kiểm tra & lưu file ảnh hóa đơn tải lên.
++
++- Loại file xác định bằng chữ ký (magic bytes), KHÔNG tin content-type / tên file do client gửi.
++- Tên file lưu trên đĩa do server tự sinh (uuid) nên không có path traversal.
++"""
++from __future__ import annotations
++
++from pathlib import Path
++from uuid import uuid4
++
++from fastapi import HTTPException, UploadFile
++
++from app.core.config import settings
++from app.core.errors import BadRequest
++
++JPEG_MAGIC = b"\xff\xd8\xff"
++PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
++CHUNK = 64 * 1024
++
++
++def max_upload_bytes() -> int:
++    return settings.MAX_UPLOAD_MB * 1024 * 1024
++
++
++def detect_image_extension(data: bytes) -> str | None:
++    """'.jpg' / '.png' theo magic bytes; None nếu không phải JPG/PNG."""
++    if data.startswith(JPEG_MAGIC):
++        return ".jpg"
++    if data.startswith(PNG_MAGIC):
++        return ".png"
++    return None
++
++
++async def read_limited(file: UploadFile) -> bytes:
++    """Đọc từng khúc và dừng ngay khi vượt giới hạn (413), không nạp cả file khổng lồ vào RAM."""
++    limit = max_upload_bytes()
++    buf = bytearray()
++    while chunk := await file.read(CHUNK):
++        buf += chunk
++        if len(buf) > limit:
++            raise HTTPException(status_code=413, detail=f"Ảnh không được vượt quá {settings.MAX_UPLOAD_MB} MB")
++    return bytes(buf)
++
++
++def validate_image(data: bytes) -> str:
++    """Trả phần mở rộng hợp lệ hoặc ném 400."""
++    if not data:
++        raise BadRequest("Ảnh hóa đơn không được để trống")
++    extension = detect_image_extension(data)
++    if extension is None:
++        raise BadRequest("Chỉ chấp nhận ảnh JPG hoặc PNG hợp lệ")
++    return extension
++
++
++def save_image(data: bytes, extension: str) -> Path:
++    """Ghi file vào UPLOAD_DIR; lỗi giữa chừng thì xóa file dở dang."""
++    upload_dir = Path(settings.UPLOAD_DIR)
++    upload_dir.mkdir(parents=True, exist_ok=True)
++    path = upload_dir / f"{uuid4().hex}{extension}"
++    try:
++        path.write_bytes(data)
++    except Exception:
++        path.unlink(missing_ok=True)
++        raise
++    return path
+diff --git a/backend/tests/test_core.py b/backend/tests/test_core.py
+index c83cef3..d32f3af 100644
+--- a/backend/tests/test_core.py
++++ b/backend/tests/test_core.py
+@@ -293,14 +293,17 @@ def test_verify_ok_sets_payer_and_status(client, setup):
+     r = _verify(client, setup, payer="O", who="L")  # Leader xác nhận, O là người trả
+     assert r.status_code == 200, r.text
+     assert r.json()["status"] == "VERIFIED" and r.json()["payer_id"] == setup["uid"]["O"]
+-    assert r.json()["can_edit_items"] is False
+-    # Sau khi xác nhận: không sửa được nữa, không xác nhận lại được
+-    assert _item(client, setup).status_code == 409
+-    assert client.patch(f"/api/receipts/{setup['rid']}", json={"merchant_name": "Z"}, headers=setup["h"]["U"]).status_code == 409
++    assert r.json()["can_edit_items"] is True  # VERIFIED vẫn sửa được (sẽ quay về DRAFT nếu ảnh hưởng chia tiền)
++    # Đã VERIFIED thì không xác nhận lại được
+     assert _verify(client, setup).status_code == 409
+     # Dashboard bắt đầu có số liệu cho người trả
+     s = client.get("/api/dashboard/summary", headers=setup["h"]["O"]).json()
+     assert Decimal(s["total_spent"]) == Decimal("105000")
++    # Sửa thông tin không ảnh hưởng chia tiền: vẫn VERIFIED; thêm món: quay về DRAFT
++    url = f"/api/receipts/{setup['rid']}"
++    assert client.patch(url, json={"merchant_name": "Z"}, headers=setup["h"]["U"]).json()["status"] == "VERIFIED"
++    assert _item(client, setup).status_code == 201
++    assert client.get(url, headers=setup["h"]["U"]).json()["status"] == "DRAFT"
+ 
+ 
+ def test_verify_wrong_total_422_stays_draft(client, setup):
+diff --git a/backend/tests/test_receipt_upload_state.py b/backend/tests/test_receipt_upload_state.py
+new file mode 100644
+index 0000000..cad1f33
+--- /dev/null
++++ b/backend/tests/test_receipt_upload_state.py
+@@ -0,0 +1,231 @@
++"""Test cho: (1) API tải ảnh + kiểm tra file, (2) máy trạng thái DRAFT → VERIFIED → SETTLED."""
++from decimal import Decimal
++
++import pytest
++from sqlalchemy import select
++
++from app.core.db import SessionLocal
++from app.models import Debt, GroupMember, Receipt, SplitDetail
++from tests.conftest import register
++
++JPG = b"\xff\xd8\xff\xe0" + b"\x00" * 32
++PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
++
++
++@pytest.fixture()
++def upload_dir(monkeypatch, tmp_path):
++    from app.modules.receipts import service
++
++    monkeypatch.setattr(service.settings, "UPLOAD_DIR", str(tmp_path))
++    return tmp_path
++
++
++def _upload(client, headers, gid, data=JPG, name="a.jpg", mime="image/jpeg"):
++    return client.post(f"/api/groups/{gid}/receipts", headers=headers, files={"file": (name, data, mime)})
++
++
++@pytest.fixture()
++def team(client, upload_dir):
++    """leader (L), member (M), outsider (X)."""
++    h = {n: register(client, f"{n.lower()}@x.vn", f"Người {n}") for n in "LMX"}
++    gid = client.post("/api/groups", json={"name": "N"}, headers=h["L"]).json()["id"]
++    assert client.post(f"/api/groups/{gid}/members", json={"email": "m@x.vn"}, headers=h["L"]).status_code == 201
++    return {"h": h, "gid": gid, "dir": upload_dir}
++
++
++# ---------------- Upload ----------------
++def test_upload_accepts_jpg_and_png_by_magic_bytes(client, team):
++    jpg = _upload(client, team["h"]["L"], team["gid"], JPG)
++    png = _upload(client, team["h"]["L"], team["gid"], PNG, "x.jpg", "image/jpeg")  # đuôi/MIME nói dối
++    assert jpg.status_code == png.status_code == 201
++    assert sorted(p.suffix for p in team["dir"].iterdir()) == [".jpg", ".png"]
++
++
++@pytest.mark.parametrize("data", [b"", b"GIF89a....", b"%PDF-1.4", b"<html>", b"\xff\xd8", b"\x89PNG"])
++def test_upload_rejects_non_image_content_even_with_image_mime(client, team, data):
++    r = _upload(client, team["h"]["L"], team["gid"], data, "a.jpg", "image/jpeg")
++    assert r.status_code == 400
++    assert list(team["dir"].iterdir()) == []
++
++
++def test_upload_size_limit_boundary(client, team):
++    exactly = JPG + b"x" * (5 * 1024 * 1024 - len(JPG))
++    assert _upload(client, team["h"]["L"], team["gid"], exactly).status_code == 201
++    assert _upload(client, team["h"]["L"], team["gid"], exactly + b"x").status_code == 413
++    assert len(list(team["dir"].iterdir())) == 1  # ảnh quá cỡ không bị lưu
++
++
++def test_upload_requires_active_member(client, team):
++    assert _upload(client, team["h"]["X"], team["gid"]).status_code == 403        # người ngoài
++    assert _upload(client, team["h"]["L"], 9999).status_code == 404               # nhóm không tồn tại
++    assert client.post(f"/api/groups/{team['gid']}/receipts", files={"file": ("a.jpg", JPG)}).status_code == 401
++    with SessionLocal() as db:  # thành viên đã bị gỡ (không còn ACTIVE)
++        gm = db.scalar(select(GroupMember).where(GroupMember.group_id == team["gid"], GroupMember.user_id == 2))
++        gm.status = "REMOVED"
++        db.commit()
++    assert _upload(client, team["h"]["M"], team["gid"]).status_code == 403
++    assert list(team["dir"].iterdir()) == []
++
++
++def test_upload_non_member_gets_403_before_size_check(client, team):
++    too_big = JPG + b"x" * (5 * 1024 * 1024)
++    assert _upload(client, team["h"]["X"], team["gid"], too_big).status_code == 403
++
++
++def test_upload_creates_draft_pending_without_running_ocr(client, team, monkeypatch):
++    from app.modules.ocr import service as ocr_service
++
++    def boom(*a, **k):
++        raise AssertionError("upload không được tự gọi OCR")
++
++    monkeypatch.setattr(ocr_service, "extract", boom)
++    r = _upload(client, team["h"]["M"], team["gid"]).json()
++    assert (r["status"], r["ocr_status"], r["uploaded_by"], r["group_id"]) == ("DRAFT", "PENDING", 2, team["gid"])
++    assert "image_path" not in r  # không lộ đường dẫn file trên server
++    with SessionLocal() as db:
++        assert db.get(Receipt, r["id"]).status == "DRAFT"
++
++
++def test_upload_file_removed_when_db_write_fails(client, team, monkeypatch):
++    from sqlalchemy.orm import Session
++
++    def fail(self):
++        raise RuntimeError("db down")
++
++    monkeypatch.setattr(Session, "commit", fail)
++    assert _upload(client, team["h"]["L"], team["gid"]).status_code == 500
++    assert list(team["dir"].iterdir()) == []
++
++
++# ---------------- Máy trạng thái ----------------
++def _draft(client, team, who="L"):
++    """Hóa đơn DRAFT hợp lệ sẵn sàng verify: 1 món 100.000, tổng 100.000."""
++    r = _upload(client, team["h"][who], team["gid"]).json()
++    url = f"/api/receipts/{r['id']}"
++    assert client.post(f"{url}/items", headers=team["h"][who], json={"item_name": "A", "unit_price": "100000"}).status_code == 201
++    assert client.patch(url, headers=team["h"][who], json={"subtotal": "100000", "total_amount": "100000"}).status_code == 200
++    return r["id"], url, r["uploaded_by"]
++
++
++def _status(client, team, url):
++    return client.get(url, headers=team["h"]["L"]).json()["status"]
++
++
++def test_cannot_skip_draft_to_settled_or_verify_twice(client, team):
++    rid, url, lid = _draft(client, team)
++    r = client.post(f"{url}/settle", headers=team["h"]["L"])
++    assert r.status_code == 409 and r.json()["error"]["code"] == "INVALID_STATUS_TRANSITION"
++    assert _status(client, team, url) == "DRAFT"
++    assert client.post(f"{url}/verify", headers=team["h"]["L"], json={"payer_id": lid}).status_code == 200
++    assert client.post(f"{url}/verify", headers=team["h"]["L"], json={"payer_id": lid}).status_code == 409
++
++
++def test_verified_edits_only_reopen_when_split_inputs_change(client, team):
++    rid, url, lid = _draft(client, team)
++    L = team["h"]["L"]
++    item_id = client.get(url, headers=L).json()["items"][0]["id"]
++    verify = lambda: client.post(f"{url}/verify", headers=L, json={"payer_id": lid})  # noqa: E731
++
++    assert verify().status_code == 200
++    # không ảnh hưởng chia tiền → giữ VERIFIED
++    assert client.patch(url, headers=L, json={"merchant_name": "Quán", "category": "Ăn uống"}).json()["status"] == "VERIFIED"
++    assert client.patch(url, headers=L, json={"total_amount": "100000"}).json()["status"] == "VERIFIED"  # cùng giá trị
++    assert client.patch(f"{url}/items/{item_id}", headers=L, json={"quantity": "1"}).json() is not None
++    assert _status(client, team, url) == "VERIFIED"
++    # đổi từng loại dữ liệu chia tiền → về DRAFT
++    for field in ("subtotal", "tax_amount", "service_fee", "total_amount"):
++        assert _status(client, team, url) == "VERIFIED"
++        assert client.patch(url, headers=L, json={field: "1"}).json()["status"] == "DRAFT", field
++        client.patch(url, headers=L, json={"subtotal": "100000", "total_amount": "100000", "tax_amount": None, "service_fee": None})
++        assert verify().status_code == 200, field
++    assert client.patch(f"{url}/items/{item_id}", headers=L, json={"unit_price": "50000"}).status_code == 200
++    assert _status(client, team, url) == "DRAFT"
++
++
++def test_reopen_clears_stale_split_and_open_debts(client, team):
++    rid, url, lid = _draft(client, team)
++    L = team["h"]["L"]
++    assert client.post(f"{url}/verify", headers=L, json={"payer_id": lid}).status_code == 200
++    with SessionLocal() as db:
++        db.add(SplitDetail(receipt_id=rid, user_id=2, item_amount=Decimal(1), fee_amount=Decimal(0), final_amount=Decimal(1)))
++        db.add(Debt(receipt_id=rid, debtor_id=2, creditor_id=1, amount=Decimal(1), status="OPEN"))
++        db.commit()
++    assert client.patch(url, headers=L, json={"total_amount": "1"}).json()["status"] == "DRAFT"
++    with SessionLocal() as db:
++        assert db.scalars(select(SplitDetail).where(SplitDetail.receipt_id == rid)).all() == []
++        assert db.scalars(select(Debt).where(Debt.receipt_id == rid)).all() == []
++
++
++def test_paid_debt_blocks_reopen_and_changes_are_rolled_back(client, team):
++    rid, url, lid = _draft(client, team)
++    L = team["h"]["L"]
++    assert client.post(f"{url}/verify", headers=L, json={"payer_id": lid}).status_code == 200
++    with SessionLocal() as db:
++        db.add(Debt(receipt_id=rid, debtor_id=2, creditor_id=1, amount=Decimal(1), status="PAID"))
++        db.commit()
++    r = client.patch(url, headers=L, json={"total_amount": "1"})
++    assert r.status_code == 409 and r.json()["error"]["code"] == "RECEIPT_HAS_PAID_DEBT"
++    body = client.get(url, headers=L).json()
++    assert body["status"] == "VERIFIED" and Decimal(body["total_amount"]) == Decimal("100000")  # không bị ghi dở
++
++
++def test_settled_is_fully_locked_and_flags(client, team):
++    rid, url, lid = _draft(client, team)
++    L, M = team["h"]["L"], team["h"]["M"]
++    d = client.get(url, headers=L).json()
++    assert (d["can_verify"], d["can_settle"], d["is_locked"]) == (True, False, False)
++    assert client.get(url, headers=M).json()["can_verify"] is False  # M không phải người tải lên cũng không phải Leader
++    d = client.post(f"{url}/verify", headers=L, json={"payer_id": lid}).json()
++    assert (d["can_verify"], d["can_settle"], d["is_locked"]) == (False, True, False)
++    item_id = d["items"][0]["id"]
++    d = client.post(f"{url}/settle", headers=L).json()
++    assert d["status"] == "SETTLED" and (d["can_verify"], d["can_settle"], d["is_locked"]) == (False, False, True)
++
++    def locked(r):
++        assert r.status_code == 409 and r.json()["error"]["code"] == "RECEIPT_SETTLED", r.text
++
++    locked(client.patch(url, headers=L, json={"merchant_name": "Z"}))
++    locked(client.patch(url, headers=L, json={"total_amount": "1"}))
++    locked(client.post(f"{url}/items", headers=L, json={"item_name": "Z", "unit_price": "1"}))
++    locked(client.patch(f"{url}/items/{item_id}", headers=L, json={"item_name": "Z"}))
++    locked(client.delete(f"{url}/items/{item_id}", headers=L))
++    locked(client.post(f"{url}/verify", headers=L, json={"payer_id": lid}))
++    locked(client.post(f"{url}/settle", headers=L))
++    assert _status(client, team, url) == "SETTLED"
++
++
++def test_ocr_cannot_overwrite_verified_or_settled(client, team):
++    rid, url, lid = _draft(client, team)
++    L = team["h"]["L"]
++    assert client.post(f"{url}/verify", headers=L, json={"payer_id": lid}).status_code == 200
++    assert client.post(f"/api/ocr/receipts/{rid}", headers=L).status_code == 409
++    assert client.post(f"{url}/settle", headers=L).status_code == 200
++    assert client.post(f"/api/ocr/receipts/{rid}", headers=L).status_code == 409
++
++
++def test_ocr_result_dropped_if_receipt_locked_during_ocr(client, team, monkeypatch):
++    """OCR chạy lâu; nếu hóa đơn bị verify ở request khác giữa chừng → không ghi đè."""
++    from app.modules.ocr import service as ocr_service
++    from app.modules.ocr.parser import parse_receipt
++
++    rid, url, lid = _draft(client, team)
++    L = team["h"]["L"]
++    with SessionLocal() as db:  # xóa dữ liệu để OCR "có gì đó để ghi"
++        r = db.get(Receipt, rid)
++        r.ocr_status = "PENDING"
++        db.commit()
++
++    def slow_extract(path):
++        assert client.post(f"{url}/verify", headers=L, json={"payer_id": lid}).status_code == 200
++        parsed = parse_receipt(["QUÁN X", "Phở 1 50.000 50.000", "Tổng cộng 50.000"])
++
++        class Raw:
++            text = ""
++
++        return parsed, Raw()
++
++    monkeypatch.setattr(ocr_service, "extract", slow_extract)
++    assert client.post(f"/api/ocr/receipts/{rid}", headers=L).status_code == 409
++    body = client.get(url, headers=L).json()
++    assert body["status"] == "VERIFIED" and Decimal(body["total_amount"]) == Decimal("100000")
++    assert [i["item_name"] for i in body["items"]] == ["A"]
