@@ -5,7 +5,7 @@
 Trong service/router chỉ cần raise:
     raise NotFound("Không tìm thấy nhóm")
     raise Forbidden("Bạn không thuộc nhóm này")
-    raise BadRequest("...") / Conflict("...") / Unauthorized("...")
+    raise BadRequest("...") / Conflict("...") / Unauthorized("...") / Unprocessable("...", details=[...])
 """
 import logging
 
@@ -73,6 +73,12 @@ class NotFound(AppError):
 
 class Conflict(AppError):
     status_code, code = 409, "CONFLICT"
+
+
+class Unprocessable(AppError):
+    """Dữ liệu đúng định dạng nhưng sai nghiệp vụ (vd: tổng tiền không khớp). details: [{field, message}]."""
+
+    status_code, code = 422, "VALIDATION_ERROR"
 
 
 # ---------- Schema cho Swagger ----------

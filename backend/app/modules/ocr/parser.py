@@ -66,6 +66,9 @@ def fold(s: str) -> str:
 
 
 _MONEY_TOKEN = re.compile(r"(?<![\w])(\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d{1,2})?(?![\w])(?!\s*%)")
+# Dòng tổng kết: hóa đơn VN hay viết "50 662 000" (khoảng trắng làm dấu nghìn). Chỉ dùng cho dòng tổng,
+# vì ở dòng món "2 150 000" có thể là SL=2 rồi đơn giá 150 000 -> không thể đoán chắc.
+_MONEY_TOKEN_SPACED = re.compile(r"(?<![\w])(\d{1,3}(?:[.,\s]\d{3})+|\d+)(?:[.,]\d{1,2})?(?![\w])(?!\s*%)")
 
 
 def parse_money(token: str) -> Decimal | None:
@@ -82,12 +85,15 @@ def parse_money(token: str) -> Decimal | None:
     return value if value <= MAX_MONEY else None
 
 
-def money_tokens(line: str) -> list[tuple[int, Decimal]]:
-    """[(vị trí, giá trị)] các số tiền trong dòng; bỏ số đi kèm dấu %."""
+def money_tokens(line: str, *, spaced: bool = False) -> list[tuple[int, Decimal]]:
+    """[(vị trí, giá trị)] các số tiền trong dòng; bỏ số đi kèm dấu % và số 0 (nhiễu OCR).
+
+    spaced=True: nhận cả "50 662 000" (khoảng trắng làm dấu nghìn) — dùng cho dòng tổng kết.
+    """
     out = []
-    for m in _MONEY_TOKEN.finditer(line):
+    for m in (_MONEY_TOKEN_SPACED if spaced else _MONEY_TOKEN).finditer(line):
         v = parse_money(m.group(0))
-        if v is not None:
+        if v is not None and v > 0:
             out.append((m.start(), v))
     return out
 
@@ -156,7 +162,7 @@ _QTY_SUFFIX = re.compile(r"\s+[xX*]?\s*(\d{1,2})\s*$")
 
 
 def _clean_name(name: str) -> str:
-    name = re.sub(r"[|_]+", " ", name)
+    name = re.sub(r"[|_\[\]{}()]+", " ", name)
     name = re.sub(r"\s+", " ", name).strip(" -:.,*x")
     return name[:255]
 
@@ -228,7 +234,7 @@ def parse_receipt(lines: list[str]) -> ParsedReceipt:
             continue
         kind = classify_summary(f)
         if kind:
-            tokens = money_tokens(line)
+            tokens = money_tokens(line, spaced=True)
             if tokens:  # dòng tiêu đề như "HÓA ĐƠN THANH TOÁN" không có số -> chưa hết vùng món
                 in_items_zone = False
                 # lấy số cuối dòng; "tổng" lặp lại nhiều lần -> lấy lần xuất hiện cuối

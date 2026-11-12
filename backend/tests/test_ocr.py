@@ -159,3 +159,40 @@ def test_ocr_endpoint_requires_membership(client, monkeypatch, tmp_path):
     rid = _make_receipt(client, monkeypatch, tmp_path, owner)
     assert client.post(f"/api/ocr/receipts/{rid}", headers=outsider).status_code == 403
     assert client.post("/api/ocr/receipts/9999", headers=owner).status_code == 404
+
+
+# ---------- hóa đơn viết số kiểu "50 662 000" (khoảng trắng làm dấu nghìn) ----------
+
+def test_summary_line_with_space_thousands_separator():
+    r = parse_receipt(["Quán Cơm Tấm", "Cơm tấm 2 40.000 80.000", "Tạm tính: 1 250 000", "Tiền thanh toán: 50 662 000"])
+    assert r.subtotal == Decimal(1250000)
+    assert r.total_amount == Decimal(50662000)
+
+
+def test_zero_noise_is_not_a_total():
+    r = parse_receipt(["Quán A", "Tổng cộng: 000"])
+    assert r.total_amount is None
+
+
+def test_item_name_strips_table_border_noise():
+    r = parse_receipt(["Quán A", "[ Khăn lạnh | 31 2.000 62.000", "Tổng cộng 62.000"])
+    assert [i.item_name for i in r.items] == ["Khăn lạnh"]
+
+
+def test_tesseract_lang_falls_back_to_installed(monkeypatch):
+    """Thiếu tessdata 'vie' thì chỉ dùng 'eng' thay vì ném lỗi Tesseract -> API 500."""
+    from app.modules.ocr import engine
+
+    class FakeTess:
+        @staticmethod
+        def get_languages(config=""):
+            return ["eng", "osd"]
+
+    monkeypatch.setattr(engine, "_tess_langs", None)
+    monkeypatch.setattr(engine.settings, "OCR_LANG", "vie+eng")
+    assert engine._resolve_tess_lang(FakeTess) == "eng"
+    monkeypatch.setattr(engine, "_tess_langs", None)
+    monkeypatch.setattr(engine.settings, "OCR_LANG", "vie")
+    with pytest.raises(OcrError):
+        engine._resolve_tess_lang(FakeTess)
+    monkeypatch.setattr(engine, "_tess_langs", None)

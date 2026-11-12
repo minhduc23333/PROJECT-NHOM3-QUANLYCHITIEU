@@ -66,6 +66,33 @@ def group_into_lines(boxes: list[OcrBox]) -> list[str]:
     return [" ".join(x.text for x in sorted(r, key=lambda b: b.x)) for r in rows]
 
 
+_tess_langs: str | None = None
+
+
+def _resolve_tess_lang(pytesseract) -> str:
+    """Lọc OCR_LANG theo gói ngôn ngữ thực sự đã cài (vd chưa có 'vie' thì chỉ dùng 'eng').
+
+    Không lọc thì Tesseract ném lỗi khi thiếu tessdata -> API 500 thay vì rơi về nhập tay.
+    """
+    global _tess_langs
+    if _tess_langs is not None:
+        return _tess_langs
+    wanted = [x for x in settings.OCR_LANG.split("+") if x]
+    try:
+        installed = set(pytesseract.get_languages(config=""))
+    except Exception:  # không liệt kê được -> cứ dùng nguyên cấu hình
+        return settings.OCR_LANG
+    usable = [x for x in wanted if x in installed]
+    if not usable:
+        raise OcrError(f"Tesseract chưa cài ngôn ngữ nào trong OCR_LANG={settings.OCR_LANG}")
+    if usable != wanted:
+        missing = "+".join(x for x in wanted if x not in installed)
+        log.warning("Tesseract thiếu tessdata '%s' -> chỉ dùng '%s' (độ chính xác tiếng Việt sẽ kém hơn)",
+                    missing, "+".join(usable))
+    _tess_langs = "+".join(usable)
+    return _tess_langs
+
+
 def _tesseract(img: np.ndarray) -> list[OcrBox]:
     try:
         import pytesseract
@@ -75,10 +102,12 @@ def _tesseract(img: np.ndarray) -> list[OcrBox]:
         pytesseract.pytesseract.tesseract_cmd = settings.TESSERACT_CMD
     try:
         d = pytesseract.image_to_data(
-            img, lang=settings.OCR_LANG, config="--psm 6", output_type=pytesseract.Output.DICT
+            img, lang=_resolve_tess_lang(pytesseract), config="--psm 6", output_type=pytesseract.Output.DICT
         )
     except pytesseract.TesseractNotFoundError as exc:
         raise OcrError("Không tìm thấy Tesseract; đặt TESSERACT_CMD trong .env") from exc
+    except pytesseract.TesseractError as exc:
+        raise OcrError(f"Tesseract lỗi: {exc}") from exc
     boxes = []
     for i, txt in enumerate(d["text"]):
         txt = (txt or "").strip()

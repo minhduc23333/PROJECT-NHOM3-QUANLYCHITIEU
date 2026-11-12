@@ -1,11 +1,13 @@
 # File: backend/scripts/spike_ocr.py
+import os
 import time
 import cv2
 import pytesseract
 import easyocr
 
-# Đường dẫn tới Tesseract trên máy bạn
-pytesseract.pytesseract.tesseract_cmd = r'D:\Tesseract-OCR\tesseract.exe'
+# Đặt biến môi trường TESSERACT_CMD nếu tesseract không nằm trong PATH
+if os.getenv("TESSERACT_CMD"):
+    pytesseract.pytesseract.tesseract_cmd = os.environ["TESSERACT_CMD"]
 
 def test_tesseract(img_path):
     print("=== 1. Đang chạy Tesseract ===")

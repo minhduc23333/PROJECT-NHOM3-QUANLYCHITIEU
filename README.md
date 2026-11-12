@@ -11,7 +11,7 @@ docker compose up -d
 # 2. Backend
 cd backend
 python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.txt   # OCR cần Tesseract + gói 'vie' (Linux: apt install tesseract-ocr tesseract-ocr-vie)
 cp .env.example .env        # rồi ĐỔI JWT_SECRET (>= 32 ký tự):
                             # python -c "import secrets; print(secrets.token_urlsafe(48))"
 alembic upgrade head        # tạo bảng
@@ -36,6 +36,17 @@ cd backend && pytest
 | POST | `/api/auth/register` | Đăng ký (`full_name`, `email`, `password` ≥ 8 ký tự). Trả 201 + token. Email trùng → 409 |
 | POST | `/api/auth/login` | Đăng nhập (`email`, `password`). Trả token |
 | GET | `/api/auth/me` | Thông tin người dùng hiện tại (header `Authorization: Bearer <token>`) |
+
+| GET | `/api/groups/{id}/receipts` | Danh sách hóa đơn của nhóm |
+| POST | `/api/groups/{id}/receipts` | Tải ảnh JPG/PNG (≤ 5 MB) → bản nháp `DRAFT`, `ocr_status=PENDING` |
+| POST | `/api/ocr/receipts/{id}` | Chạy OCR + parser, điền merchant/ngày/tiền + dòng món. OCR lỗi vẫn trả 200 với `ocr_status=FAILED` để nhập tay. Chỉ người tải lên |
+| GET | `/api/receipts/{id}` | Xem bản nháp + dòng món + `items_total` + cờ `can_edit_*` |
+| PATCH | `/api/receipts/{id}` | Sửa đầu hóa đơn (chỉ người tải lên, chỉ khi `DRAFT`) |
+| POST / PATCH / DELETE | `/api/receipts/{id}/items[/{item_id}]` | CRUD dòng món (người tải lên hoặc Leader, chỉ khi `DRAFT`); `line_total` tự tính = SL × đơn giá |
+| POST | `/api/receipts/{id}/verify` | Body `{payer_id}`. Tổng tiền khớp → `VERIFIED`; sai → 422 kèm danh sách lỗi |
+| POST | `/api/receipts/{id}/settle` | `VERIFIED` → `SETTLED` (người tải lên hoặc Leader) |
+
+Luồng: `DRAFT` → verify → `VERIFIED` → settle → `SETTLED`. Sau `VERIFIED` không sửa được nữa (409).
 
 Lỗi luôn có dạng `{"error": {"code", "message", "details"}}`.
 
