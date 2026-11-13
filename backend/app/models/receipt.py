@@ -21,7 +21,7 @@ class Receipt(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), index=True)
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), nullable=True, index=True)
     uploaded_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     payer_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     image_path: Mapped[str] = mapped_column(String(500))

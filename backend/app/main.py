@@ -25,7 +25,7 @@ TAGS = [
     {"name": "auth", "description": "Đăng ký, đăng nhập (JWT), thông tin tài khoản"},
     {"name": "groups", "description": "Nhóm chi tiêu và thành viên"},
     {"name": "receipts", "description": "Hóa đơn"},
-    {"name": "ocr", "description": "Đọc hóa đơn từ ảnh (chưa triển khai)"},
+    {"name": "ocr", "description": "Đọc hóa đơn từ ảnh"},
     {"name": "split", "description": "Chọn món, chia tiền, công nợ (chưa triển khai)"},
     {"name": "dashboard", "description": "Số liệu tổng quan"},
 ]
@@ -51,7 +51,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 register_error_handlers(app)
-app.include_router(auth_router)
 
 api = APIRouter(prefix=settings.API_PREFIX)
 

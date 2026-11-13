@@ -12,3 +12,8 @@ PyJWT
 httpx
 pytest
 ruff
+# OCR (task T05E16E): tiền xử lý ảnh + engine Tesseract
+opencv-python-headless
+numpy
+pytesseract
+# easyocr   # tùy chọn: bỏ comment nếu đặt OCR_ENGINE=easyocr (nặng, kéo theo torch)
