@@ -51,7 +51,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 register_error_handlers(app)
-app.include_router(auth_router)
 
 api = APIRouter(prefix=settings.API_PREFIX)
 

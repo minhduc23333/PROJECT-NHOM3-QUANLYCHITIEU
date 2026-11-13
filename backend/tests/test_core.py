@@ -142,6 +142,14 @@ def test_swagger_has_bearer(client):
     assert client.get("/docs").status_code == 200
 
 
+def test_auth_routes_appear_once_under_api_prefix(client):
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/api/auth/register" in paths
+    assert "/api/auth/login" in paths
+    assert "/auth/register" not in paths
+    assert "/auth/login" not in paths
+
+
 # ---------- Bản nháp hóa đơn, CRUD dòng món, xác nhận (Receipt tạo thẳng vào DB vì API upload làm riêng) ----------
 def _user_id(email):
     with SessionLocal() as db:
