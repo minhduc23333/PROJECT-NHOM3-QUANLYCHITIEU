@@ -11,7 +11,7 @@ export function barChartVND(canvas, labels, values, label = "Số tiền") {
     data: {
       labels,
       datasets: [
-        { label, data: values, backgroundColor: "#0d6efd", borderRadius: 4 },
+        { label, data: values, backgroundColor: "#b6a1d4", hoverBackgroundColor: "#f0b0c3", borderRadius: 6 },
       ],
     },
     options: {
