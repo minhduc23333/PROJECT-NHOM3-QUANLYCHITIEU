@@ -28,6 +28,26 @@ addRoute("/dev/ui", uiDemo.render);
 
 let renderSeq = 0;
 
+// Điện thoại: đóng menu trượt (offcanvas).
+// Không dùng data-bs-dismiss trên <a> vì Bootstrap sẽ chặn luôn việc chuyển trang.
+function closeMobileMenu() {
+  const el = document.getElementById("mobileSidebar");
+  if (!el || !el.classList.contains("show")) return;
+  if (window.bootstrap?.Offcanvas) {
+    bootstrap.Offcanvas.getOrCreateInstance(el).hide();
+  } else {
+    // Bootstrap chưa tải được: tự gỡ trạng thái mở
+    el.classList.remove("show");
+    document.querySelectorAll(".offcanvas-backdrop").forEach((b) => b.remove());
+    document.body.style.overflow = "";
+  }
+}
+
+// Bấm vào một mục trong menu điện thoại: đóng menu ngay, trang chuyển theo link
+document.getElementById("mobile-menu")?.addEventListener("click", (e) => {
+  if (e.target.closest("a")) closeMobileMenu();
+});
+
 async function route() {
   const found = match(currentPath()) ?? {
     render: notFound.render,
@@ -49,6 +69,8 @@ async function route() {
     const r = a.dataset.route;
     a.classList.toggle("active", r === "/" ? path === "/" : path.startsWith(r));
   });
+
+  closeMobileMenu();
 
   const seq = ++renderSeq;
   const view = document.getElementById("view");
