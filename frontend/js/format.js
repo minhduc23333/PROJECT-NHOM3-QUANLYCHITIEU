@@ -24,6 +24,12 @@ export function formatVNDShort(value) {
   return num.format(n);
 }
 
+// Số có dấu chấm ngăn cách, không có "₫": 90000 -> "90.000" (dùng cho ô nhập tiền)
+export function formatNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? num.format(n) : "";
+}
+
 // Ô nhập tiền: "90.000" -> 90000
 export const parseVND = (text) =>
   Number(String(text ?? "").replace(/[^\d-]/g, "")) || 0;

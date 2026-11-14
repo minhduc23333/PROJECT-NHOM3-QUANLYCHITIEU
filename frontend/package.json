@@ -1,0 +1,9 @@
+{
+  "name": "smartsplit-frontend",
+  "private": true,
+  "type": "module",
+  "description": "Frontend HTML/JS thuần, không cần build. File này chỉ để chạy test component.",
+  "scripts": {
+    "test": "node --test tests/components.test.mjs"
+  }
+}
