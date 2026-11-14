@@ -118,9 +118,17 @@ export function mountAuth(el, { mode, title, sub, body }) {
           <p class="lead-text">Chọn món mình đã ăn, thuế và phí được chia theo tỉ lệ, công nợ trong nhóm tự cập nhật.</p>
         </div>
         ${receipt()}
+        <div class="auth-mobile-cta">
+          <a class="auth-submit" href="#/register" data-go="register">Đăng ký</a>
+          <a class="auth-cta-secondary" href="#/login" data-go="login">Đăng nhập</a>
+        </div>
       </section>
       <section class="auth-panel">
         <div class="auth-card">
+          <button type="button" class="auth-back" aria-label="Quay lại màn hình giới thiệu">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+            Quay lại
+          </button>
           ${brand()}
           <nav class="auth-tabs" aria-label="Chọn đăng nhập hoặc đăng ký">
             <a href="#/login" data-tab="login">Đăng nhập</a>
@@ -133,6 +141,7 @@ export function mountAuth(el, { mode, title, sub, body }) {
     page = el.querySelector(".auth-page");
     countUp(page);
     tilt(page.querySelector(".auth-visual"));
+    wireMobileSteps(page);
   }
 
   const prev = page.dataset.mode;
@@ -152,6 +161,23 @@ export function mountAuth(el, { mode, title, sub, body }) {
   }
   document.title = `${title} | SmartSplit AI`;
   return bodyEl;
+}
+
+// Điện thoại: màn giới thiệu (hóa đơn + 2 nút) -> bấm nút mới hiện form. Máy tính không dùng tới.
+function wireMobileSteps(page) {
+  page.dataset.step = "welcome";
+  page.querySelectorAll("[data-go]").forEach((a) => {
+    a.addEventListener("click", () => {
+      page.dataset.step = "form";
+      window.scrollTo(0, 0);
+      // Cùng trang hiện tại thì hash không đổi, router không chạy lại -> tự focus ô đầu tiên
+      setTimeout(() => page.querySelector(".auth-body input")?.focus(), 50);
+    });
+  });
+  page.querySelector(".auth-back").addEventListener("click", () => {
+    page.dataset.step = "welcome";
+    window.scrollTo(0, 0);
+  });
 }
 
 /** Ô nhập kiểu trang auth. Tương thích showFieldErrors / clearFieldErrors trong ui.js */
