@@ -805,15 +805,118 @@ body.public #toasts {
     display: none;
   }
 }
+/* ---- Điện thoại màn hình thấp: bớt chữ phụ, gọn hóa đơn ---- */
+@media (max-width: 900px) and (max-height: 780px) {
+  .auth-page .auth-visual .lead-text {
+    display: none;
+  }
+  .receipt-head span {
+    display: none;
+  }
+  .receipt-split {
+    gap: 1px;
+  }
+}
+
+/* ---- Điện thoại: màn giới thiệu và nút quay lại (máy tính ẩn đi) ---- */
+.auth-mobile-cta,
+.auth-back {
+  display: none;
+}
+.auth-cta-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 50px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1.5px solid rgba(255, 255, 255, 0.95);
+  color: var(--plum);
+  font-weight: 600;
+  text-decoration: none;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 20px -12px rgba(168, 70, 111, 0.45);
+}
+.auth-cta-secondary:active {
+  transform: translateY(1px) scale(0.99);
+}
+
 @media (max-width: 900px) {
   .auth-page {
     grid-template-columns: 1fr;
   }
-  .auth-visual {
+  /* Bước 1: giới thiệu */
+  .auth-page[data-step="welcome"] .auth-panel {
     display: none;
   }
-  .auth-card > .auth-brand {
+  .auth-page[data-step="welcome"] .auth-visual {
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding: 22px 22px calc(20px + env(safe-area-inset-bottom));
+    gap: 14px;
+    justify-content: flex-start;
+  }
+  .auth-visual h1 {
+    font-size: 1.55rem;
+    margin-bottom: 8px;
+  }
+  .auth-visual .lead-text {
+    display: block;
+    font-size: 0.92rem;
+  }
+  .receipt-stage {
+    width: min(100%, 290px);
+    margin-top: 34px;
+  }
+  .receipt-slot {
+    padding-bottom: 8px;
+  }
+  .receipt {
+    padding: 12px 16px 20px;
+    font-size: 0.8rem;
+  }
+  .receipt-items li {
+    padding: 2px 0;
+  }
+  .chip {
+    padding: 3px 7px;
+    font-size: 0.66rem;
+  }
+  .auth-mobile-cta {
+    display: grid;
+    gap: 12px;
+    margin-top: auto;
+    animation: rise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) 0.6s both;
+  }
+  .auth-mobile-cta .auth-submit {
+    text-decoration: none;
+  }
+  /* Bước 2: form */
+  .auth-page[data-step="form"] .auth-visual {
+    display: none;
+  }
+  .auth-back {
     display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0 0 18px -6px;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--brand-dark);
+    font: inherit;
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .auth-back:active {
+    background: var(--mist);
+  }
+  .auth-card > .auth-brand {
+    display: flex;
+    width: max-content;
   }
   .auth-panel {
     align-items: flex-start;

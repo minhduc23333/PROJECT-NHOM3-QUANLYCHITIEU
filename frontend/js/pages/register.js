@@ -130,8 +130,8 @@ export function render(el) {
       );
       setSession(res.access_token, res.user);
       await showSuccess(btn, "Đã tạo tài khoản");
+      goAfterLogin(navigate); // chuyển trang trước, thông báo sau
       toast.success(`Chào mừng ${res.user.full_name}`);
-      goAfterLogin(navigate);
     } catch (e) {
       handleFormError(form, e); // 409 trùng email -> đỏ ô email, 422 -> đỏ từng ô
       shakeInvalid(form);

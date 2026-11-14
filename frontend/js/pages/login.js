@@ -90,8 +90,8 @@ export function render(el) {
       else localStorage.removeItem(REMEMBER_KEY);
       setSession(res.access_token, res.user);
       await showSuccess(btn, "Đăng nhập thành công");
+      goAfterLogin(navigate); // chuyển trang trước, thông báo sau
       toast.success(`Xin chào ${res.user.full_name}`);
-      goAfterLogin(navigate);
     } catch (e) {
       if (e.status === 401) {
         // Sai email/mật khẩu: báo dưới ô mật khẩu, giữ email để sửa
