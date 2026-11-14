@@ -24,7 +24,7 @@ export function render(el) {
         ${card("Người khác nợ tôi", formatVND(s.owed_to_me), "text-success")}
       </div>
       <div class="card"><div class="card-body">
-        <h5 class="card-title">Chi tiêu tôi đã trả, 6 tháng gần nhất</h5>
+        <h5 class="card-title">Chi tiêu cá nhân (hóa đơn đã chốt), 6 tháng gần nhất</h5>
         <div class="chart-box"><canvas id="chart-monthly"></canvas></div>
       </div></div>`;
       const labels = s.monthly.map((m) =>

@@ -304,9 +304,9 @@ def test_verify_ok_sets_payer_and_status(client, setup):
     assert r.json()["can_edit_items"] is True  # VERIFIED vẫn sửa được (sẽ quay về DRAFT nếu ảnh hưởng chia tiền)
     # Đã VERIFIED thì không xác nhận lại được
     assert _verify(client, setup).status_code == 409
-    # Dashboard bắt đầu có số liệu cho người trả
+    # Dashboard chỉ tính hóa đơn SETTLED: mới VERIFIED thì chưa có chi tiêu nào
     s = client.get("/api/dashboard/summary", headers=setup["h"]["O"]).json()
-    assert Decimal(s["total_spent"]) == Decimal("105000")
+    assert Decimal(s["personal_spent"]) == 0 and Decimal(s["group_spent"]) == 0 and s["receipt_count"] == 0
     # Sửa thông tin không ảnh hưởng chia tiền: vẫn VERIFIED; thêm món: quay về DRAFT
     url = f"/api/receipts/{setup['rid']}"
     assert client.patch(url, json={"merchant_name": "Z"}, headers=setup["h"]["U"]).json()["status"] == "VERIFIED"
