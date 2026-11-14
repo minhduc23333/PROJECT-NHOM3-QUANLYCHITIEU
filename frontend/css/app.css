@@ -1,5 +1,175 @@
+/* ---------- Giao diện chung của app (khung ngoài) ----------
+   Bảng màu "Pink & Lavender": #F0B0C3 hồng, #E9DDF7 lavender nhạt, #F9F7FC nền, #B6A1D4 lavender, #464052 chữ đậm.
+   Trang đăng nhập/đăng ký (body.public) không bị ảnh hưởng. */
+:root {
+  --ss-pink: #f0b0c3;        /* màu nhấn chính */
+  --ss-lav-light: #e9ddf7;   /* nền phụ, viền, nhãn */
+  --ss-bg: #f9f7fc;          /* nền trang */
+  --ss-lav: #b6a1d4;         /* màu nhấn phụ */
+  --ss-ink: #464052;         /* chữ đậm, tiêu đề */
+  --ss-surface: #ffffff;
+  --ss-brand: var(--ss-pink);
+  --ss-brand-dark: #7a62a3;  /* link: lavender đậm hơn để đọc rõ trên nền trắng */
+  --ss-plum: var(--ss-ink);
+  --ss-muted: #6f687c;
+  --ss-mist: #f3edfb;
+  --ss-line: var(--ss-lav-light);
+  --ss-grad: linear-gradient(100deg, #f0b0c3 0%, #d9b5d9 50%, #b6a1d4 100%);
+}
+body:not(.public) {
+  background: var(--ss-bg);
+  color: var(--ss-ink);
+  font-family: "Be Vietnam Pro", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+/* Thanh trên cùng */
+.app-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 1020;
+  min-height: 56px;
+  background: rgba(255, 255, 255, 0.92);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--ss-line);
+  box-shadow: 0 4px 16px -14px rgba(70, 64, 82, 0.35);
+}
+.app-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  color: var(--ss-plum) !important;
+  letter-spacing: -0.01em;
+}
+.brand-mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: inline-grid;
+  place-items: center;
+  background: var(--ss-grad);
+  color: var(--ss-plum);
+}
+.user-chip {
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--ss-mist);
+  color: var(--ss-plum);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.user-chip:empty {
+  display: none !important;
+}
+.btn-logout {
+  border: 1px solid var(--ss-line);
+  color: var(--ss-brand-dark);
+  background: #fff;
+  font-weight: 500;
+}
+.btn-logout:hover {
+  background: var(--ss-mist);
+  color: var(--ss-plum);
+  border-color: var(--ss-brand);
+}
+
+/* Menu bên trái (máy tính) và menu trượt (điện thoại) */
+.app-sidebar {
+  width: 210px;
+  background: rgba(255, 255, 255, 0.7);
+  border-right: 1px solid var(--ss-line);
+}
+.app-sidebar .nav-link,
+.app-offcanvas .nav-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  color: var(--ss-muted);
+  font-weight: 500;
+  transition: background 0.15s, color 0.15s;
+}
+.nav-ico {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.app-sidebar .nav-link:hover,
+.app-offcanvas .nav-link:hover {
+  background: var(--ss-mist);
+  color: var(--ss-plum);
+}
+.app-sidebar .nav-link.active,
+.app-offcanvas .nav-link.active {
+  background: var(--ss-grad);
+  color: var(--ss-plum);
+  font-weight: 600;
+  box-shadow: 0 6px 14px -10px rgba(182, 161, 212, 0.9);
+}
+.app-offcanvas {
+  background: var(--ss-bg);
+}
+.app-offcanvas .offcanvas-header {
+  border-bottom: 1px solid var(--ss-line);
+}
+
+/* Nội dung: tiêu đề trang, nút, link, thẻ hài hòa với khung */
+body:not(.public) main#view {
+  padding: 24px !important;
+}
+body:not(.public) #view h2 {
+  color: var(--ss-plum);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+body:not(.public) #view .card {
+  border: 1px solid var(--ss-line);
+  border-radius: 14px;
+}
+body:not(.public) #view a:not(.btn):not(.card):not(.nav-link) {
+  color: var(--ss-brand-dark);
+}
+body:not(.public) #view .btn-primary {
+  background: var(--ss-grad);
+  border: 0;
+  color: var(--ss-plum);
+  font-weight: 600;
+  box-shadow: 0 8px 18px -12px rgba(182, 161, 212, 0.9);
+}
+body:not(.public) #view .btn-primary:hover,
+body:not(.public) #view .btn-primary:focus-visible {
+  background: linear-gradient(100deg, #eba1b7 0%, #d1a8d2 50%, #a993cb 100%);
+  color: var(--ss-plum);
+}
+body:not(.public) #view .btn-outline-primary {
+  border-color: var(--ss-brand);
+  color: var(--ss-brand-dark);
+}
+body:not(.public) #view .btn-outline-primary:hover {
+  background: var(--ss-mist) !important;
+  border-color: var(--ss-brand-dark);
+  color: var(--ss-brand-dark);
+}
+body:not(.public) #view .form-control:focus,
+body:not(.public) #view .form-select:focus {
+  border-color: var(--ss-brand);
+  box-shadow: 0 0 0 0.2rem rgba(182, 161, 212, 0.35);
+}
+@media (max-width: 575.98px) {
+  body:not(.public) main#view {
+    padding: 16px !important;
+  }
+}
+
 #sidebar {
-  width: 200px;
   min-height: calc(100vh - 56px);
 }
 main#view {
@@ -22,4 +192,170 @@ body.public main#view {
 .chart-box {
   position: relative;
   height: 280px;
+}
+
+/* ---------- Quản lý nhóm (UI-05) ----------
+   Cùng bảng màu hồng pastel với trang đăng nhập (css/auth.css), chỉ áp dụng trong .page-groups */
+.page-groups {
+  --brand: var(--ss-brand);
+  --brand-dark: var(--ss-brand-dark);
+  --plum: var(--ss-ink);
+  --mist: var(--ss-mist);
+  --line: var(--ss-line);
+  --grad: var(--ss-grad);
+}
+.page-groups h5 {
+  color: var(--plum);
+}
+/* Tiêu đề "Nhóm của tôi" nổi bật */
+.page-title {
+  font-size: clamp(1.8rem, 3vw, 2.3rem);
+  font-weight: 800 !important;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  background: linear-gradient(95deg, #464052 0%, #7a62a3 60%, #c27a9b 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+}
+.page-title-ico {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: var(--grad);
+  color: var(--plum);
+  box-shadow: 0 8px 18px -12px rgba(182, 161, 212, 0.9);
+}
+.page-title-ico svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.page-groups a:not(.btn):not(.card) {
+  color: var(--brand-dark);
+}
+
+/* Nút */
+.page-groups .btn-primary {
+  background: var(--grad);
+  border: 0;
+  color: var(--plum);
+  font-weight: 600;
+  box-shadow: 0 8px 18px -12px rgba(182, 161, 212, 0.9);
+}
+.page-groups .btn-primary:hover,
+.page-groups .btn-primary:focus-visible {
+  background: linear-gradient(100deg, #eba1b7 0%, #d1a8d2 50%, #a993cb 100%);
+  color: var(--plum);
+}
+.page-groups .btn-primary:disabled {
+  background: var(--grad);
+  color: var(--plum);
+  opacity: 0.7;
+}
+.page-groups .btn-outline-primary {
+  border-color: var(--brand);
+  color: var(--brand-dark);
+}
+.page-groups .btn-outline-primary:hover {
+  background: var(--mist) !important;
+  border-color: var(--brand-dark);
+  color: var(--brand-dark);
+}
+
+/* Thẻ, ô nhập */
+.page-groups .card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.page-groups .form-control:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 0.2rem rgba(182, 161, 212, 0.35);
+}
+
+/* Bảng màu pastel cho avatar / nhóm (tone-0 .. tone-5) */
+/* 6 sắc độ trong cùng họ hồng - lavender để hài hòa với bảng màu */
+.tone-0 { --tone-bg: #fce4ec; --tone-fg: #b0587a; }
+.tone-1 { --tone-bg: #e9ddf7; --tone-fg: #6c56a0; }
+.tone-2 { --tone-bg: #f3e6f7; --tone-fg: #8a5aa6; }
+.tone-3 { --tone-bg: #fbe9f0; --tone-fg: #a0516e; }
+.tone-4 { --tone-bg: #e6e3f7; --tone-fg: #5a579c; }
+.tone-5 { --tone-bg: #f2e7ef; --tone-fg: #84566f; }
+
+.avatar {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  font-size: 0.85rem;
+  background: var(--tone-bg, #fce4ec);
+  color: var(--tone-fg, #b0587a);
+}
+
+/* Thẻ nhóm: viền trái theo màu nhóm */
+.group-card {
+  border-left: 4px solid var(--tone-fg) !important;
+  transition: box-shadow 0.15s, transform 0.15s;
+}
+.group-card:hover,
+.group-card:focus-visible {
+  box-shadow: 0 10px 22px -14px rgba(122, 98, 163, 0.45);
+  transform: translateY(-1px);
+}
+
+/* Đầu trang chi tiết nhóm */
+.group-hero {
+  padding: 18px 20px;
+  border-radius: 16px;
+  background: linear-gradient(110deg, var(--tone-bg) 0%, #ffffff 100%);
+  border: 1px solid var(--line);
+  color: var(--plum);
+}
+.group-hero .avatar {
+  width: 52px;
+  height: 52px;
+  font-size: 1.05rem;
+  background: #fff;
+}
+.back-link {
+  text-decoration: none;
+}
+
+/* Nhãn vai trò */
+.role-leader {
+  background: var(--ss-pink);
+  color: var(--ss-ink);
+}
+.role-member {
+  background: var(--ss-lav-light);
+  color: var(--ss-ink);
+}
+
+/* Danh sách thành viên */
+.member-list li {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line, #e9ddf7);
+}
+.member-list li:last-child {
+  border-bottom: 0;
+}
+.leader-note {
+  display: inline-block;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--mist);
+  color: var(--brand-dark);
+}
+.min-w-0 {
+  min-width: 0;
 }
