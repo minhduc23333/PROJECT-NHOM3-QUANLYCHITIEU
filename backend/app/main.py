@@ -52,6 +52,16 @@ app.add_middleware(
 )
 register_error_handlers(app)
 
+
+@app.middleware("http")
+async def no_cache_frontend(request, call_next):
+    """File giao diện (html/js/css) luôn được trình duyệt kiểm tra bản mới.
+    Tránh tình trạng đổi nhánh / sửa code mà trình duyệt vẫn chạy file cũ đã lưu tạm."""
+    response = await call_next(request)
+    if not request.url.path.startswith(settings.API_PREFIX):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
 api = APIRouter(prefix=settings.API_PREFIX)
 
 
