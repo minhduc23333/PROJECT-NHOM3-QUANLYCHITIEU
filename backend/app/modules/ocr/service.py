@@ -21,7 +21,7 @@ from app.modules.ocr.preprocess import ImageError
 
 log = logging.getLogger(__name__)
 
-_MONEY_LIMIT = Decimal("9999999999999")  # Numeric(15,2): chừa chỗ cho 2 chữ số thập phân
+_MONEY_LIMIT = Decimal(9999999999999)  # Numeric(15,2): chừa chỗ cho 2 chữ số thập phân
 
 
 def extract(image_path: str) -> tuple[ParsedReceipt, OcrResult]:

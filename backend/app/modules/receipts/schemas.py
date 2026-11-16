@@ -29,7 +29,7 @@ Quantity = Annotated[Decimal, Field(gt=0, max_digits=10, decimal_places=2)]
 # ---------- Dòng món ----------
 class ItemCreate(BaseModel):
     item_name: Name = Field(examples=["Bún bò"])
-    quantity: Quantity = Decimal("1")
+    quantity: Quantity = Decimal(1)
     unit_price: Money = Field(examples=["45000"])
     line_total: Money | None = Field(
         default=None,
@@ -75,7 +75,7 @@ class ReceiptDetail(ReceiptOut):
     tax_amount: Decimal | None = None
     service_fee: Decimal | None = None
     items: list[ItemOut] = []
-    items_total: Decimal = Decimal("0")       # SUM(line_total) thực tế, để UI so với subtotal
+    items_total: Decimal = Decimal(0)       # SUM(line_total) thực tế, để UI so với subtotal
     can_edit_receipt: bool = False            # người tải lên, trừ khi SETTLED
     can_edit_items: bool = False              # người tải lên hoặc Leader, trừ khi SETTLED
     is_locked: bool = False                   # True khi SETTLED: khóa mọi thao tác sửa

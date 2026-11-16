@@ -19,9 +19,14 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Debt, Group, GroupMember, Receipt, SplitDetail, User
-from app.modules.dashboard.schemas import CategoryTotal, DashboardSummary, MonthTotal, RecentReceipt
+from app.modules.dashboard.schemas import (
+    CategoryTotal,
+    DashboardSummary,
+    MonthTotal,
+    RecentReceipt,
+)
 
-ZERO = Decimal("0")
+ZERO = Decimal(0)
 SETTLED = "SETTLED"
 MONTHS = 6
 RECENT_LIMIT = 5

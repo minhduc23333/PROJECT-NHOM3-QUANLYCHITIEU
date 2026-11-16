@@ -11,8 +11,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
-MIN_LINE_TOTAL = Decimal("1000")  # VND: giá món < 1.000đ gần như chắc chắn là số khác (số bàn, địa chỉ...)
-MAX_MONEY = Decimal("999999999")  # lớn hơn thường là số điện thoại/mã số thuế, không phải tiền
+MIN_LINE_TOTAL = Decimal(1000)  # VND: giá món < 1.000đ gần như chắc chắn là số khác (số bàn, địa chỉ...)
+MAX_MONEY = Decimal(999999999)  # lớn hơn thường là số điện thoại/mã số thuế, không phải tiền
 
 
 @dataclass

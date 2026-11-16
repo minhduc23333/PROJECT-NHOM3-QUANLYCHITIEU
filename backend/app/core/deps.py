@@ -17,7 +17,10 @@ bearer = HTTPBearer(auto_error=False, description="Dán access_token lấy từ 
 DB = Annotated[Session, Depends(get_db)]
 
 
-def get_current_user(db: DB, cred: HTTPAuthorizationCredentials | None = Depends(bearer)) -> User:
+def get_current_user(
+    db: DB,
+    cred: HTTPAuthorizationCredentials | None = Depends(bearer),  # noqa: B008
+) -> User:
     if cred is None:
         raise Unauthorized("Bạn cần đăng nhập")
     user_id = decode_access_token(cred.credentials)

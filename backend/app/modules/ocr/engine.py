@@ -80,7 +80,7 @@ def _resolve_tess_lang(pytesseract) -> str:
     wanted = [x for x in settings.OCR_LANG.split("+") if x]
     try:
         installed = set(pytesseract.get_languages(config=""))
-    except Exception:  # không liệt kê được -> cứ dùng nguyên cấu hình
+    except pytesseract.TesseractNotFoundError:  # để image_to_data báo lỗi Tesseract rõ ràng hơn
         return settings.OCR_LANG
     usable = [x for x in wanted if x in installed]
     if not usable:
