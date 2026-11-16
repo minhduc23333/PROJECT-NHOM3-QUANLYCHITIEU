@@ -1,23 +1,11 @@
 // T05E174 - UI-03: Danh sách hóa đơn
 // - Chọn nhóm, danh sách hóa đơn của nhóm, badge trạng thái DRAFT / VERIFIED / SETTLED
-// - Nút "+ Thêm hóa đơn": tải ảnh JPG/PNG (≤ 5 MB) -> tạo hóa đơn nháp (DRAFT)
+// - Nút "+ Thêm hóa đơn": mở trang tải ảnh & đọc hóa đơn (#/receipts/new, T05E175)
 // - Lọc cơ bản: theo trạng thái, tìm theo tên cửa hàng, sắp xếp
-import { get, upload } from "../api.js";
+import { get } from "../api.js";
 import { formatDate, formatVND } from "../format.js";
-import {
-  clearFieldErrors,
-  dataTable,
-  emptyHTML,
-  esc,
-  renderState,
-  selectField,
-  showFieldErrors,
-  toast,
-  withBusy,
-} from "../ui.js";
+import { dataTable, emptyHTML, esc, renderState, selectField } from "../ui.js";
 
-const MAX_MB = 5;
-const IMAGE_TYPES = ["image/jpeg", "image/png"];
 
 export const STATUS = {
   DRAFT: { label: "Nháp", cls: "rc-badge-draft", hint: "Chưa xác nhận, còn sửa được" },
@@ -72,9 +60,16 @@ function ensureStyles() {
 
 const ICON =
   '<svg viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9.5 8h5M9.5 12h5M9.5 16h3"/></svg>';
+// Hóa đơn nháp: trạng thái đọc ảnh (OCR) + link mở trang tải ảnh để đọc tiếp / nhập tay (T05E175)
 const OCR = {
-  PENDING: '<span class="text-muted small d-block">Chờ đọc ảnh</span>',
-  FAILED: '<span class="text-danger small d-block">Đọc ảnh lỗi</span>',
+  PENDING: { text: "Chờ đọc ảnh", cls: "text-muted", action: "Đọc ngay" },
+  FAILED: { text: "Đọc ảnh lỗi", cls: "text-danger", action: "Nhập tay" },
+  DONE: { text: "", cls: "", action: "Kiểm tra & sửa" },
+};
+const ocrHint = (r) => {
+  const o = r.status === "DRAFT" ? OCR[r.ocr_status ?? "PENDING"] : null;
+  if (!o) return "";
+  return `<span class="small d-block"><span class="${o.cls}">${o.text}${o.text ? " · " : ""}</span><a href="#/receipts/new?receipt=${r.id}" style="color:#7a62a3">${o.action}</a></span>`;
 };
 
 export const statusBadge = (s) => {
@@ -131,10 +126,9 @@ export function render(el, params) {
           <div class="text-muted">Hóa đơn của từng nhóm và trạng thái chia tiền</div>
         </div>
       </div>
-      <button class="btn btn-primary d-none" id="btn-add" aria-expanded="false" aria-controls="upload-panel">+ Thêm hóa đơn</button>
+      <a class="btn btn-primary d-none" id="btn-add" href="#/receipts/new">+ Thêm hóa đơn</a>
     </div>
     <div id="picker"></div>
-    <div id="upload-panel" class="card mb-3 d-none"></div>
     <div id="filters" class="d-none"></div>
     <div id="list"></div>
   </div>`;
@@ -142,13 +136,13 @@ export function render(el, params) {
   const list = el.querySelector("#list");
   const filters = el.querySelector("#filters");
   const addBtn = el.querySelector("#btn-add");
-  const panel = el.querySelector("#upload-panel");
 
   const syncUrl = () => {
     const qs = new URLSearchParams({ group: state.groupId });
     if (state.status !== "ALL") qs.set("status", state.status);
     // Đổi địa chỉ mà không vẽ lại trang (để giữ bộ lọc khi tải lại / gửi link)
     history.replaceState(null, "", `#/receipts?${qs}`);
+    addBtn.setAttribute("href", `#/receipts/new?group=${state.groupId}`);
   };
 
   /* ---------- Danh sách + bộ lọc ---------- */
@@ -159,7 +153,7 @@ export function render(el, params) {
       title: "Cửa hàng",
       render: (v, r) =>
         (v ? `<span class="fw-semibold">${esc(v)}</span>` : '<span class="text-muted fst-italic">Chưa có tên</span>') +
-        (r.status === "DRAFT" ? OCR[r.ocr_status] ?? "" : ""),
+        ocrHint(r),
     },
     {
       key: "payer_id",
@@ -179,7 +173,7 @@ export function render(el, params) {
             <div style="min-width:0">
               ${r.merchant_name ? `<div class="fw-semibold text-truncate">${esc(r.merchant_name)}</div>` : '<div class="text-muted fst-italic">Chưa có tên</div>'}
               <div class="text-muted small">${formatDate(r.receipt_date ?? r.created_at)} · ${r.payer_id ? esc(state.members.get(r.payer_id) ?? "") : "Chưa chọn người trả"}</div>
-              ${r.status === "DRAFT" ? OCR[r.ocr_status] ?? "" : ""}
+              ${ocrHint(r)}
             </div>
             <div class="text-end flex-shrink-0">
               <div class="fw-semibold">${formatVND(r.total_amount)}</div>
@@ -274,87 +268,6 @@ export function render(el, params) {
       },
     );
 
-  /* ---------- Thêm hóa đơn (tải ảnh) ---------- */
-  panel.innerHTML = `
-    <div class="card-body">
-      <h5 class="card-title mb-1">Thêm hóa đơn</h5>
-      <p class="text-muted small mb-3">Chụp hoặc chọn ảnh hóa đơn (JPG, PNG, tối đa ${MAX_MB} MB). Hóa đơn được tạo ở trạng thái <b>Nháp</b>, sau đó có thể đọc ảnh và sửa trước khi xác nhận.</p>
-      <form id="upload-form" novalidate>
-        <div class="mb-3">
-          <label class="form-label" for="f-file">Ảnh hóa đơn <span class="text-danger">*</span></label>
-          <input class="form-control" type="file" id="f-file" name="file" accept="image/jpeg,image/png">
-          <div class="invalid-feedback"></div>
-        </div>
-        <img id="preview" class="d-none rounded border mb-3" alt="Ảnh hóa đơn đã chọn" style="max-height:180px;max-width:100%">
-        <div class="d-flex gap-2">
-          <button class="btn btn-primary" type="submit">Tải lên</button>
-          <button class="btn btn-outline-secondary" type="button" id="btn-cancel">Hủy</button>
-        </div>
-      </form>
-    </div>`;
-  const form = panel.querySelector("#upload-form");
-  const fileInput = form.elements.file;
-  const preview = panel.querySelector("#preview");
-
-  const togglePanel = (open) => {
-    panel.classList.toggle("d-none", !open);
-    addBtn.setAttribute("aria-expanded", String(open));
-    if (!open) {
-      form.reset();
-      clearFieldErrors(form);
-      preview.classList.add("d-none");
-      if (preview.src) URL.revokeObjectURL(preview.src);
-      preview.removeAttribute("src");
-    } else fileInput.focus();
-  };
-  addBtn.onclick = () => togglePanel(panel.classList.contains("d-none"));
-  panel.querySelector("#btn-cancel").onclick = () => togglePanel(false);
-
-  const checkFile = (f) => {
-    if (!f) return "Chọn ảnh hóa đơn";
-    if (!IMAGE_TYPES.includes(f.type)) return "Chỉ nhận ảnh JPG hoặc PNG";
-    if (f.size > MAX_MB * 1024 * 1024) return `Ảnh quá lớn (tối đa ${MAX_MB} MB)`;
-    return null;
-  };
-
-  fileInput.onchange = () => {
-    clearFieldErrors(form);
-    const f = fileInput.files[0];
-    const err = checkFile(f);
-    if (preview.src) URL.revokeObjectURL(preview.src);
-    if (err) {
-      preview.classList.add("d-none");
-      if (f) showFieldErrors(form, [{ field: "file", message: err }]);
-      return;
-    }
-    preview.src = URL.createObjectURL(f);
-    preview.classList.remove("d-none");
-  };
-
-  form.onsubmit = async (ev) => {
-    ev.preventDefault();
-    clearFieldErrors(form);
-    const f = fileInput.files[0];
-    const err = checkFile(f);
-    if (err) return showFieldErrors(form, [{ field: "file", message: err }]);
-    const fd = new FormData();
-    fd.append("file", f);
-    try {
-      const r = await withBusy(form.querySelector("[type=submit]"), () => upload(`/groups/${state.groupId}/receipts`, fd));
-      toast.success("Đã thêm hóa đơn nháp");
-      togglePanel(false);
-      state.rows = [r, ...state.rows.filter((x) => x.id !== r.id)];
-      Object.assign(state, { status: "ALL", q: "", sort: "newest", highlight: r.id });
-      syncUrl();
-      paintFilters();
-      paintTable();
-    } catch (e) {
-      // 400 sai loại ảnh, 413 quá lớn -> báo dưới ô chọn ảnh; còn lại -> toast
-      if ([400, 413, 422].includes(e.status)) showFieldErrors(form, [{ field: "file", message: e.message }]);
-      else toast.error(e);
-    }
-  };
-
   /* ---------- Chọn nhóm ---------- */
   renderState(
     el.querySelector("#picker"),
@@ -374,7 +287,6 @@ export function render(el, params) {
       })}</div>`;
       box.querySelector("select").onchange = (e) => {
         Object.assign(state, { groupId: e.target.value, status: "ALL", q: "" });
-        togglePanel(false);
         syncUrl();
         loadReceipts();
       };
