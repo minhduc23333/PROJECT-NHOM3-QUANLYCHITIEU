@@ -1,16 +1,15 @@
 // T05E175 - UI Tải ảnh & theo dõi trạng thái OCR (#/receipts/new)
 // Bước 1: chọn nhóm + chọn ảnh (xem trước, kiểm tra định dạng/kích thước ngay trên trình duyệt)
 // Bước 2: tải lên (có % tiến độ) -> chạy OCR (hiện đang xử lý, đếm giây)
-// Bước 3: OCR xong -> kiểm tra & sửa;  OCR thất bại -> chuyển sang nhập tay
+// Bước 3: chuyển sang trang Kiểm tra & xác nhận #/receipts/:id (OCR thất bại -> nhập tay ở trang đó)
 // Mở lại hóa đơn nháp dang dở: #/receipts/new?receipt=<id>
-import { API_BASE, ApiError, del, get, patch, post } from "../api.js";
+import { API_BASE, ApiError, get, post } from "../api.js";
 import { getToken, logout } from "../auth.js";
-import { formatNumber, formatVND, parseVND } from "../format.js";
 
-import { clearFieldErrors, emptyHTML, esc, showFieldErrors, toast, withBusy } from "../ui.js";
+import { navigate } from "../router.js";
+import { emptyHTML, esc, toast } from "../ui.js";
 
 export const MAX_MB = 5;
-const CATEGORIES = ["Ăn uống", "Đi lại", "Mua sắm", "Nhà ở", "Giải trí", "Sức khỏe", "Khác"];
 const FIELD_LABEL = {
   merchant_name: "Tên cửa hàng",
   receipt_date: "Ngày",
@@ -157,7 +156,7 @@ export function render(el, params) {
       </div>
     </div>
     <ol class="up-steps" aria-label="Các bước">
-      <li data-step="1">Chọn ảnh</li><li data-step="2">Đọc hóa đơn</li><li data-step="3">Kiểm tra &amp; lưu</li>
+      <li data-step="1">Chọn ảnh</li><li data-step="2">Đọc hóa đơn</li><li data-step="3">Kiểm tra &amp; xác nhận</li>
     </ol>
     <div id="stage"></div>
   </div>`;
@@ -354,241 +353,9 @@ export function render(el, params) {
     await stepReview();
   }
 
-  /* ---------- Bước 3: kiểm tra & lưu / nhập tay ---------- */
-  async function stepReview() {
-    setStep(3);
-    stage.innerHTML = '<div class="card"><div class="card-body"><div class="text-muted">Đang tải hóa đơn...</div></div></div>';
-    let detail;
-    try {
-      detail = await get(`/receipts/${state.receipt.id}`);
-    } catch (e) {
-      stage.innerHTML = `<div class="card"><div class="card-body">${emptyHTML(e.message)}</div></div>`;
-      return;
-    }
-    if (detail.status !== "DRAFT" || !detail.can_edit_receipt) {
-      stage.innerHTML = `<div class="card"><div class="card-body">
-        <div class="notice notice-ok"><span class="notice-ico">ℹ</span><div>Hóa đơn này đã ${detail.status === "DRAFT" ? "không thể sửa bởi bạn" : "được xác nhận"}.</div></div>
-        <a class="btn btn-primary mt-3" href="#/receipts${detail.group_id ? `?group=${detail.group_id}` : ""}">Về danh sách hóa đơn</a>
-      </div></div>`;
-      return;
-    }
-    const failed = detail.ocr_status !== "DONE";
-    const missing = new Set(state.ocr?.missing ?? (failed ? Object.keys(FIELD_LABEL) : []));
-    const warnings = state.ocr?.warnings ?? [];
-    renderEditor(detail, { failed, missing, warnings });
-  }
-
-  function renderEditor(d, { failed, missing, warnings }) {
-    const need = (k) => (missing.has(k) && !failed ? '<span class="need">Cần kiểm tra</span>' : "");
-    const catOptions = [...new Set([...(d.category ? [d.category] : []), ...CATEGORIES])];
-    const notice = failed
-      ? `<div class="notice notice-fail mb-3" role="alert"><span class="notice-ico">✍</span><div>
-           <div class="fw-semibold">Không đọc được hóa đơn từ ảnh, vui lòng nhập tay</div>
-           <div class="small">Ảnh có thể bị mờ, nghiêng, thiếu sáng, hoặc máy chủ chưa cài công cụ đọc ảnh (OCR). Hóa đơn nháp vẫn được lưu, bạn chỉ cần điền các ô bên dưới.</div>
-         </div></div>`
-      : `<div class="notice notice-ok mb-3"><span class="notice-ico">✓</span><div>
-           <div class="fw-semibold">Đã đọc xong hóa đơn</div>
-           <div class="small">Kiểm tra lại các ô bên dưới, nhất là những ô có nhãn <span class="need">Cần kiểm tra</span>, rồi bấm Lưu.</div>
-           ${warnings.length ? `<ul class="small mb-0 mt-1">${warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
-         </div></div>`;
-
-    stage.innerHTML = `<div class="card"><div class="card-body">
-      ${notice}
-      <form id="edit-form" novalidate>
-        <div class="row g-3">
-          <div class="col-md-6">
-            <label class="form-label" for="f-merchant_name">Tên cửa hàng ${need("merchant_name")}</label>
-            <input class="form-control" id="f-merchant_name" name="merchant_name" maxlength="255" placeholder="VD: Quán Phở Hòa" value="${esc(d.merchant_name ?? "")}">
-            <div class="invalid-feedback"></div>
-          </div>
-          <div class="col-6 col-md-3">
-            <label class="form-label" for="f-receipt_date">Ngày ${need("receipt_date")}</label>
-            <input class="form-control" type="date" id="f-receipt_date" name="receipt_date" value="${esc(d.receipt_date ?? new Date().toISOString().slice(0, 10))}">
-            <div class="invalid-feedback"></div>
-          </div>
-          <div class="col-6 col-md-3">
-            <label class="form-label" for="f-category">Danh mục</label>
-            <select class="form-select" id="f-category" name="category">
-              ${catOptions.map((c) => `<option ${c === (d.category ?? "Ăn uống") ? "selected" : ""}>${esc(c)}</option>`).join("")}
-            </select>
-          </div>
-        </div>
-
-        <div class="d-flex justify-content-between align-items-end mt-4 mb-2">
-          <label class="form-label mb-0">Danh sách món ${need("items")}</label>
-          <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-add-item">+ Thêm món</button>
-        </div>
-        <div class="table-responsive">
-          <table class="table align-middle items-table mb-1">
-            <thead class="table-light"><tr><th>Tên món</th><th style="width:90px">SL</th><th style="width:150px">Đơn giá</th><th class="text-end" style="width:130px">Thành tiền</th><th style="width:44px"></th></tr></thead>
-            <tbody id="items"></tbody>
-          </table>
-        </div>
-        <div class="invalid-feedback d-block mb-2" id="items-err"></div>
-
-        <div class="row g-3 justify-content-end">
-          <div class="col-6 col-md-3">
-            <label class="form-label" for="f-tax_amount">Thuế</label>
-            <input class="form-control text-end" id="f-tax_amount" name="tax_amount" inputmode="numeric" data-money value="${d.tax_amount ? formatNumber(d.tax_amount) : ""}" placeholder="0">
-          </div>
-          <div class="col-6 col-md-3">
-            <label class="form-label" for="f-service_fee">Phí dịch vụ</label>
-            <input class="form-control text-end" id="f-service_fee" name="service_fee" inputmode="numeric" data-money value="${d.service_fee ? formatNumber(d.service_fee) : ""}" placeholder="0">
-          </div>
-          <div class="col-md-5">
-            <div class="sum-box">
-              <div class="d-flex justify-content-between"><span>Tạm tính ${need("subtotal")}</span><span id="sum-sub">0 ₫</span></div>
-              <div class="d-flex justify-content-between row-total mt-1"><span>Tổng cộng ${need("total_amount")}</span><span id="sum-total">0 ₫</span></div>
-              ${!failed && d.total_amount != null ? `<div class="small text-muted mt-1">Tổng trên hóa đơn (OCR): ${formatVND(d.total_amount)}</div>` : ""}
-            </div>
-          </div>
-        </div>
-
-        <div class="d-flex flex-wrap gap-2 mt-4">
-          <button class="btn btn-primary" type="submit">Lưu hóa đơn nháp</button>
-          <a class="btn btn-outline-secondary" href="#/receipts${d.group_id ? `?group=${d.group_id}` : ""}">Để sau</a>
-        </div>
-      </form>
-    </div></div>`;
-
-    const form = stage.querySelector("#edit-form");
-    const tbody = stage.querySelector("#items");
-    const removed = new Set();
-
-    const rowHTML = (it = {}) => `<tr data-id="${it.id ?? ""}">
-      <td><input class="form-control form-control-sm" name="item_name" maxlength="255" placeholder="Tên món" value="${esc(it.item_name ?? "")}"></td>
-      <td><input class="form-control form-control-sm text-end" name="quantity" type="number" min="0.01" step="0.01" value="${it.quantity != null ? Number(it.quantity) : 1}"></td>
-      <td><input class="form-control form-control-sm text-end" name="unit_price" inputmode="numeric" data-money placeholder="0" value="${it.unit_price != null ? formatNumber(it.unit_price) : ""}"></td>
-      <td class="text-end text-nowrap" data-line>0 ₫</td>
-      <td><button type="button" class="btn btn-sm btn-link text-danger p-0" data-del aria-label="Xóa món">✕</button></td>
-    </tr>`;
-
-    const lineOf = (tr) => {
-      const q = Number(tr.querySelector("[name=quantity]").value) || 0;
-      return Math.round(q * parseVND(tr.querySelector("[name=unit_price]").value));
-    };
-    const recalc = () => {
-      let sub = 0;
-      tbody.querySelectorAll("tr").forEach((tr) => {
-        const line = lineOf(tr);
-        sub += line;
-        tr.querySelector("[data-line]").textContent = formatVND(line);
-      });
-      const total = sub + parseVND(form.elements.tax_amount.value) + parseVND(form.elements.service_fee.value);
-      stage.querySelector("#sum-sub").textContent = formatVND(sub);
-      stage.querySelector("#sum-total").textContent = formatVND(total);
-      return { sub, total };
-    };
-    const bindMoney = (root) =>
-      root.querySelectorAll("input[data-money]").forEach((inp) => {
-        inp.addEventListener("input", () => {
-          const digits = inp.value.replace(/\D/g, "");
-          inp.value = digits ? formatNumber(Number(digits)) : "";
-        });
-      });
-    const addRow = (it) => {
-      tbody.insertAdjacentHTML("beforeend", rowHTML(it));
-      const tr = tbody.lastElementChild;
-      bindMoney(tr);
-      tr.querySelector("[data-del]").onclick = () => {
-        if (tr.dataset.id) removed.add(Number(tr.dataset.id));
-        tr.remove();
-        recalc();
-      };
-      return tr;
-    };
-
-    (d.items?.length ? d.items : [{}]).forEach((it) => addRow(it));
-    bindMoney(form);
-    form.addEventListener("input", recalc);
-    recalc();
-    stage.querySelector("#btn-add-item").onclick = () => addRow().querySelector("[name=item_name]").focus();
-    if (failed) form.elements.merchant_name.focus();
-
-    form.onsubmit = async (ev) => {
-      ev.preventDefault();
-      clearFieldErrors(form);
-      const itemsErr = stage.querySelector("#items-err");
-      itemsErr.textContent = "";
-      tbody.querySelectorAll(".is-invalid").forEach((i) => i.classList.remove("is-invalid"));
-
-      // Kiểm tra các dòng món
-      const rows = [...tbody.querySelectorAll("tr")].filter(
-        (tr) => tr.querySelector("[name=item_name]").value.trim() || parseVND(tr.querySelector("[name=unit_price]").value),
-      );
-      let bad = false;
-      rows.forEach((tr) => {
-        const name = tr.querySelector("[name=item_name]");
-        const qty = tr.querySelector("[name=quantity]");
-        if (!name.value.trim()) (name.classList.add("is-invalid"), (bad = true));
-        if (!(Number(qty.value) > 0)) (qty.classList.add("is-invalid"), (bad = true));
-      });
-      if (!rows.length) {
-        itemsErr.textContent = "Nhập ít nhất một món (tên và đơn giá)";
-        return;
-      }
-      if (bad) {
-        itemsErr.textContent = "Kiểm tra lại các ô được đánh dấu đỏ trong danh sách món";
-        return;
-      }
-
-      const { sub } = recalc();
-      const tax = parseVND(form.elements.tax_amount.value);
-      const fee = parseVND(form.elements.service_fee.value);
-      const header = {
-        merchant_name: form.elements.merchant_name.value.trim() || null,
-        receipt_date: form.elements.receipt_date.value || null,
-        category: form.elements.category.value,
-        subtotal: sub,
-        tax_amount: tax,
-        service_fee: fee,
-        total_amount: sub + tax + fee,
-      };
-
-      const btn = form.querySelector("[type=submit]");
-      try {
-        await withBusy(btn, async () => {
-          for (const id of removed) await del(`/receipts/${d.id}/items/${id}`);
-          removed.clear();
-          for (const tr of rows) {
-            const body = {
-              item_name: tr.querySelector("[name=item_name]").value.trim(),
-              quantity: Number(tr.querySelector("[name=quantity]").value),
-              unit_price: parseVND(tr.querySelector("[name=unit_price]").value),
-            };
-            if (tr.dataset.id) await patch(`/receipts/${d.id}/items/${tr.dataset.id}`, body);
-            else tr.dataset.id = (await post(`/receipts/${d.id}/items`, body)).id;
-          }
-          // Dòng trống (không tên, không giá) thì bỏ khỏi bảng
-          [...tbody.querySelectorAll("tr")].filter((tr) => !rows.includes(tr)).forEach((tr) => tr.remove());
-          await patch(`/receipts/${d.id}`, header);
-        });
-        stepDone(d);
-      } catch (e) {
-        if (e.details?.length) showFieldErrors(form, e.details);
-        toast.error(e);
-      }
-    };
-  }
-
-  function stepDone(d) {
-    setStep(4);
-    const back = `#/receipts${d.group_id ? `?group=${d.group_id}` : ""}`;
-    stage.innerHTML = `<div class="card"><div class="card-body text-center py-5">
-      <div style="font-size:2.5rem">✅</div>
-      <h4 class="mt-2">Đã lưu hóa đơn nháp</h4>
-      <p class="text-muted">Hóa đơn đang ở trạng thái <b>Nháp</b>. Bước tiếp theo là chọn người trả và xác nhận hóa đơn.</p>
-      <div class="d-flex flex-wrap gap-2 justify-content-center">
-        <a class="btn btn-primary" href="${back}">Về danh sách hóa đơn</a>
-        <button type="button" class="btn btn-outline-secondary" id="btn-again">Thêm hóa đơn khác</button>
-      </div>
-    </div></div>`;
-    toast.success("Đã lưu hóa đơn nháp");
-    stage.querySelector("#btn-again").onclick = () => {
-      Object.assign(state, { file: null, info: null, receipt: null, ocr: null });
-      stepPick();
-    };
-  }
+  /* ---------- Bước 3: sang trang Kiểm tra & xác nhận (T05E176) ---------- */
+  // OCR đọc được -> kiểm tra, sửa; OCR thất bại -> trang đó mở sẵn chế độ nhập tay
+  const stepReview = () => navigate(`/receipts/${state.receipt.id}`);
 
   /* ---------- Bắt đầu: hóa đơn mới, hoặc mở lại hóa đơn nháp dang dở ---------- */
   if (params.receipt) {

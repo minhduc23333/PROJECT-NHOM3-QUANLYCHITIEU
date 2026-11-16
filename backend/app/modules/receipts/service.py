@@ -1,4 +1,5 @@
 from decimal import ROUND_HALF_UP, Decimal
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -111,6 +112,16 @@ def _detail(db: Session, receipt: Receipt, member: GroupMember | None) -> Receip
 def get_receipt(db: Session, user: User, receipt_id: int) -> ReceiptDetail:
     receipt, member = _load(db, user, receipt_id)
     return _detail(db, receipt, member)
+
+
+def get_receipt_image(db: Session, user: User, receipt_id: int) -> Path:
+    """Đường dẫn ảnh gốc của hóa đơn (T05E176: xem ảnh cạnh biểu mẫu kiểm tra).
+    Cùng quyền với xem hóa đơn: thành viên nhóm, hoặc chủ hóa đơn cá nhân."""
+    receipt, _ = _load(db, user, receipt_id)
+    path = Path(receipt.image_path) if receipt.image_path else None
+    if path is None or not path.is_file():
+        raise NotFound("Không tìm thấy ảnh hóa đơn")
+    return path
 
 
 def update_receipt(db: Session, user: User, receipt_id: int, data: ReceiptUpdate) -> ReceiptDetail:
