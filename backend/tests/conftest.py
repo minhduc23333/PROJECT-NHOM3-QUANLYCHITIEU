@@ -4,12 +4,12 @@ import os
 os.environ["DATABASE_URL"] = "sqlite:///./test.db"
 os.environ["JWT_SECRET"] = "test-secret-test-secret-test-secret-123"
 
-import pytest  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
+import pytest
+from fastapi.testclient import TestClient
 
-from app.core.db import Base, engine  # noqa: E402
-import app.models  # noqa: E402,F401
-from app.main import app  # noqa: E402
+import app.models
+from app.core.db import Base, engine
+from app.main import app
 
 
 @pytest.fixture()

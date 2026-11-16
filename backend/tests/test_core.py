@@ -174,7 +174,7 @@ def setup(client):
     uid = {n: _user_id(f"{n.lower()}@x.vn") for n in "LUOX"}
     rid = _make_receipt(
         gid, uid["U"], merchant_name="Quán A",
-        subtotal=Decimal("0"), tax_amount=Decimal("0"), service_fee=Decimal("0"), total_amount=Decimal("0"),
+        subtotal=Decimal(0), tax_amount=Decimal(0), service_fee=Decimal(0), total_amount=Decimal(0),
     )
     return {"h": h, "gid": gid, "uid": uid, "rid": rid}
 
@@ -195,8 +195,8 @@ def test_get_receipt_detail_with_items_and_permissions(client, setup):
     assert r.status_code == 200
     body = r.json()
     assert body["merchant_name"] == "Quán A" and body["status"] == "DRAFT"
-    assert len(body["items"]) == 1 and Decimal(body["items"][0]["line_total"]) == Decimal("90000")
-    assert Decimal(body["items_total"]) == Decimal("90000")
+    assert len(body["items"]) == 1 and Decimal(body["items"][0]["line_total"]) == Decimal(90000)
+    assert Decimal(body["items_total"]) == Decimal(90000)
     assert body["can_edit_receipt"] is False and body["can_edit_items"] is False  # O không phải người tải/Leader
     mine = client.get(f"/api/receipts/{setup['rid']}", headers=setup["h"]["U"]).json()
     assert mine["can_edit_receipt"] is True and mine["can_edit_items"] is True
@@ -215,7 +215,7 @@ def test_only_uploader_edits_receipt_header(client, setup):
     url = f"/api/receipts/{setup['rid']}"
     r = client.patch(url, json={"merchant_name": " Quán B ", "total_amount": "100000"}, headers=setup["h"]["U"])
     assert r.status_code == 200 and r.json()["merchant_name"] == "Quán B"
-    assert Decimal(r.json()["total_amount"]) == Decimal("100000")
+    assert Decimal(r.json()["total_amount"]) == Decimal(100000)
     assert Decimal(r.json()["subtotal"]) == 0  # trường không gửi giữ nguyên
     # Leader cũng không được sửa phần OCR
     assert client.patch(url, json={"merchant_name": "Z"}, headers=setup["h"]["L"]).status_code == 403
@@ -226,9 +226,9 @@ def test_only_uploader_edits_receipt_header(client, setup):
 # ---------- CRUD dòng món ----------
 def test_add_item_auto_and_explicit_line_total(client, setup):
     r = _item(client, setup)
-    assert r.status_code == 201 and Decimal(r.json()["line_total"]) == Decimal("90000")
+    assert r.status_code == 201 and Decimal(r.json()["line_total"]) == Decimal(90000)
     r = _item(client, setup, quantity="1.5", unit_price="10000", line_total="15000")
-    assert r.status_code == 201 and Decimal(r.json()["line_total"]) == Decimal("15000")
+    assert r.status_code == 201 and Decimal(r.json()["line_total"]) == Decimal(15000)
 
 
 def test_add_item_wrong_line_total_422(client, setup):
@@ -252,14 +252,14 @@ def test_update_item_recomputes_and_validates(client, setup):
     item = _item(client, setup).json()
     url = f"/api/receipts/{setup['rid']}/items/{item['id']}"
     r = client.patch(url, json={"quantity": "3"}, headers=setup["h"]["L"])
-    assert r.status_code == 200 and Decimal(r.json()["line_total"]) == Decimal("135000")
+    assert r.status_code == 200 and Decimal(r.json()["line_total"]) == Decimal(135000)
     r = client.patch(url, json={"unit_price": "50000", "line_total": "150000"}, headers=setup["h"]["U"])
-    assert r.status_code == 200 and Decimal(r.json()["line_total"]) == Decimal("150000")
+    assert r.status_code == 200 and Decimal(r.json()["line_total"]) == Decimal(150000)
     r = client.patch(url, json={"line_total": "5"}, headers=setup["h"]["U"])
     assert r.status_code == 422 and _fields(r) == {"line_total"}
     r = client.patch(url, json={"item_name": "Bún chả"}, headers=setup["h"]["U"])
     assert r.status_code == 200 and r.json()["item_name"] == "Bún chả"
-    assert Decimal(r.json()["line_total"]) == Decimal("150000")  # chỉ đổi tên thì không đụng tiền
+    assert Decimal(r.json()["line_total"]) == Decimal(150000)  # chỉ đổi tên thì không đụng tiền
     assert client.patch(url, json={"item_name": "Z"}, headers=setup["h"]["O"]).status_code == 403
     assert client.patch(f"/api/receipts/{setup['rid']}/items/9999", json={"item_name": "Z"}, headers=setup["h"]["U"]).status_code == 404
 
@@ -338,7 +338,7 @@ def test_verify_null_tax_and_fee_count_as_zero(client, setup):
     assert _item(client, setup).status_code == 201
     with SessionLocal() as db:
         rc = db.get(Receipt, setup["rid"])
-        rc.subtotal, rc.tax_amount, rc.service_fee, rc.total_amount = Decimal("90000"), None, None, Decimal("90000")
+        rc.subtotal, rc.tax_amount, rc.service_fee, rc.total_amount = Decimal(90000), None, None, Decimal(90000)
         db.commit()
     assert _verify(client, setup).status_code == 200
 
@@ -358,8 +358,8 @@ def test_verify_permissions_and_flags_bad_line(client, setup):
     assert _verify(client, setup, who="O").status_code == 403
     assert _verify(client, setup, who="X").status_code == 403
     with SessionLocal() as db:  # dòng món sai do OCR đưa vào
-        db.add(ReceiptItem(receipt_id=setup["rid"], item_name="Lỗi", quantity=Decimal("1"),
-                           unit_price=Decimal("10"), line_total=Decimal("99")))
+        db.add(ReceiptItem(receipt_id=setup["rid"], item_name="Lỗi", quantity=Decimal(1),
+                           unit_price=Decimal(10), line_total=Decimal(99)))
         db.commit()
     r = _verify(client, setup)
     assert r.status_code == 422 and "items" in _fields(r)

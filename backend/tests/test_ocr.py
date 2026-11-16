@@ -7,21 +7,23 @@ from app.modules.ocr import preprocess as pp
 from app.modules.ocr.engine import OcrBox, OcrError, group_into_lines
 from app.modules.ocr.parser import find_date, parse_money, parse_receipt
 
-SAMPLE = """NHÀ HÀNG BÚN BÒ HUẾ
-Đ/c: 12 Lê Lợi, Q1
-ĐT: 0909123456
-HÓA ĐƠN THANH TOÁN
-Ngày: 05/11/2026 19:30
-Bàn số 5
-Tên món SL Đơn giá Thành tiền
-Bún bò đặc biệt 2 55.000 110.000
-Nem rán 1 45,000 45,000
-3. Trà đá 3 5.000 15.000
-Tạm tính: 170.000
-Phí dịch vụ 5%: 8.500
-VAT 10%: 17.850
-Tổng cộng: 196.350
-Tiền khách đưa: 300.000""".split("\n")
+SAMPLE = [
+    "NHÀ HÀNG BÚN BÒ HUẾ\r",
+    "Đ/c: 12 Lê Lợi, Q1\r",
+    "ĐT: 0909123456\r",
+    "HÓA ĐƠN THANH TOÁN\r",
+    "Ngày: 05/11/2026 19:30\r",
+    "Bàn số 5\r",
+    "Tên món SL Đơn giá Thành tiền\r",
+    "Bún bò đặc biệt 2 55.000 110.000\r",
+    "Nem rán 1 45,000 45,000\r",
+    "3. Trà đá 3 5.000 15.000\r",
+    "Tạm tính: 170.000\r",
+    "Phí dịch vụ 5%: 8.500\r",
+    "VAT 10%: 17.850\r",
+    "Tổng cộng: 196.350\r",
+    "Tiền khách đưa: 300.000",
+]
 
 
 # ---------- parser ----------
@@ -115,8 +117,8 @@ def _make_receipt(client, monkeypatch, tmp_path, headers):
 
 
 def test_ocr_endpoint_fills_receipt(client, monkeypatch, tmp_path):
-    from tests.conftest import register
     from app.modules.ocr import service
+    from tests.conftest import register
 
     h = register(client)
     rid = _make_receipt(client, monkeypatch, tmp_path, h)
@@ -135,8 +137,8 @@ def test_ocr_endpoint_fills_receipt(client, monkeypatch, tmp_path):
 
 
 def test_ocr_failure_marks_failed_for_manual_entry(client, monkeypatch, tmp_path):
-    from tests.conftest import register
     from app.modules.ocr import service
+    from tests.conftest import register
 
     h = register(client)
     rid = _make_receipt(client, monkeypatch, tmp_path, h)

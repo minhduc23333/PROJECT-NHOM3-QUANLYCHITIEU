@@ -31,9 +31,9 @@ def list_group_receipts(db: Session, user: User, group_id: int) -> list[Receipt]
     )
 
 
-ZERO = Decimal("0")
+ZERO = Decimal(0)
 CENT = Decimal("0.01")
-MAX_MONEY = Decimal("10") ** 13  # DECIMAL(15,2) chứa được < 10^13
+MAX_MONEY = Decimal(10) ** 13  # DECIMAL(15,2) chứa được < 10^13
 
 
 # ---------- Helper ----------

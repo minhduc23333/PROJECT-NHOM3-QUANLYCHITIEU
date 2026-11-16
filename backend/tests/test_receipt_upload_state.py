@@ -112,7 +112,7 @@ def _status(client, team, url):
 
 
 def test_cannot_skip_draft_to_settled_or_verify_twice(client, team):
-    rid, url, lid = _draft(client, team)
+    _rid, url, lid = _draft(client, team)
     r = client.post(f"{url}/settle", headers=team["h"]["L"])
     assert r.status_code == 409 and r.json()["error"]["code"] == "INVALID_STATUS_TRANSITION"
     assert _status(client, team, url) == "DRAFT"
@@ -121,10 +121,10 @@ def test_cannot_skip_draft_to_settled_or_verify_twice(client, team):
 
 
 def test_verified_edits_only_reopen_when_split_inputs_change(client, team):
-    rid, url, lid = _draft(client, team)
+    _rid, url, lid = _draft(client, team)
     L = team["h"]["L"]
     item_id = client.get(url, headers=L).json()["items"][0]["id"]
-    verify = lambda: client.post(f"{url}/verify", headers=L, json={"payer_id": lid})  # noqa: E731
+    verify = lambda: client.post(f"{url}/verify", headers=L, json={"payer_id": lid})
 
     assert verify().status_code == 200
     # không ảnh hưởng chia tiền → giữ VERIFIED
@@ -166,11 +166,11 @@ def test_paid_debt_blocks_reopen_and_changes_are_rolled_back(client, team):
     r = client.patch(url, headers=L, json={"total_amount": "1"})
     assert r.status_code == 409 and r.json()["error"]["code"] == "RECEIPT_HAS_PAID_DEBT"
     body = client.get(url, headers=L).json()
-    assert body["status"] == "VERIFIED" and Decimal(body["total_amount"]) == Decimal("100000")  # không bị ghi dở
+    assert body["status"] == "VERIFIED" and Decimal(body["total_amount"]) == Decimal(100000)  # không bị ghi dở
 
 
 def test_settled_is_fully_locked_and_flags(client, team):
-    rid, url, lid = _draft(client, team)
+    _rid, url, lid = _draft(client, team)
     L, M = team["h"]["L"], team["h"]["M"]
     d = client.get(url, headers=L).json()
     assert (d["can_verify"], d["can_settle"], d["is_locked"]) == (True, False, False)
@@ -227,5 +227,5 @@ def test_ocr_result_dropped_if_receipt_locked_during_ocr(client, team, monkeypat
     monkeypatch.setattr(ocr_service, "extract", slow_extract)
     assert client.post(f"/api/ocr/receipts/{rid}", headers=L).status_code == 409
     body = client.get(url, headers=L).json()
-    assert body["status"] == "VERIFIED" and Decimal(body["total_amount"]) == Decimal("100000")
+    assert body["status"] == "VERIFIED" and Decimal(body["total_amount"]) == Decimal(100000)
     assert [i["item_name"] for i in body["items"]] == ["A"]
