@@ -261,3 +261,4 @@ def parse_receipt(lines: list[str]) -> ParsedReceipt:
         if expected != result.total_amount:
             result.warnings.append(f"Tổng thanh toán ({result.total_amount}) khác tạm tính + VAT + phí ({expected})")
     return result
+
