@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 log = logging.getLogger("app.errors")
@@ -30,6 +30,7 @@ STATUS_CODES = {
     422: "VALIDATION_ERROR",
     429: "TOO_MANY_REQUESTS",
     500: "INTERNAL_ERROR",
+    503: "SERVICE_UNAVAILABLE",
 }
 
 DEFAULT_MESSAGES = {
@@ -110,6 +111,25 @@ COMMON_ERRORS = {
 }
 
 
+def describe_db_error(exc: BaseException) -> str:
+    """Đổi lỗi DB thô (mã lỗi MySQL) thành lời nhắn tiếng Việt chỉ rõ cách sửa."""
+    orig = getattr(exc, "orig", exc)
+    args = getattr(orig, "args", ())
+    errno = args[0] if args and isinstance(args[0], int) else None
+    if errno in (2002, 2003, 2006, 2013):
+        return "Không kết nối được MySQL. Hãy chạy `docker compose up -d` và kiểm tra DATABASE_URL trong backend/.env (host/port)."
+    if errno == 1045:
+        return "MySQL từ chối đăng nhập: sai user/mật khẩu trong DATABASE_URL (backend/.env)."
+    if errno == 1130:
+        return ("MySQL không cho user này kết nối từ địa chỉ khác (thường gặp khi backend chạy trong Docker còn MySQL ở máy thật). "
+                "Tạo user cho phép host '%' hoặc chạy backend trực tiếp trên máy, dùng 127.0.0.1.")
+    if errno == 1049:
+        return "Database chưa tồn tại. Kiểm tra tên database trong DATABASE_URL (mặc định: smartsplit)."
+    if errno in (1146, 1054):
+        return "Database chưa có bảng / sai phiên bản bảng. Chạy `alembic upgrade head` trong thư mục backend."
+    return "Lỗi kết nối hoặc truy vấn database. Xem log của backend để biết chi tiết."
+
+
 # ---------- Handlers ----------
 def _body(code: str, message: str, details=None) -> dict:
     return {"error": {"code": code, "message": message, "details": details}}
@@ -142,6 +162,12 @@ def register_error_handlers(app: FastAPI) -> None:
     async def integrity_exc(_: Request, exc: IntegrityError):
         log.warning("IntegrityError: %s", exc.orig)
         return JSONResponse(_body("CONFLICT", "Dữ liệu bị trùng hoặc vi phạm ràng buộc"), status_code=409)
+
+    @app.exception_handler(DBAPIError)
+    async def db_exc(_: Request, exc: DBAPIError):
+        # Lỗi hạ tầng DB (không phải lỗi của người dùng): 503 + nguyên nhân rõ ràng
+        log.error("Database error: %s", exc.orig)
+        return JSONResponse(_body("DB_UNAVAILABLE", describe_db_error(exc)), status_code=503)
 
     @app.exception_handler(Exception)
     async def unhandled(_: Request, exc: Exception):

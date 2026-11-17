@@ -1,16 +1,17 @@
 import logging
 import mimetypes
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 from app.core.config import settings
 from app.core.db import engine
-from app.core.errors import register_error_handlers
+from app.core.errors import describe_db_error, register_error_handlers
 from app.modules.auth.router import router as auth_router
 from app.modules.dashboard.router import router as dashboard_router
 from app.modules.groups.router import router as groups_router
@@ -19,6 +20,36 @@ from app.modules.receipts.router import router as receipts_router
 from app.modules.split.router import router as split_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+log = logging.getLogger("smartsplit")
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+
+def _run_migrations() -> None:
+    from alembic.config import Config
+
+    from alembic import command
+
+    command.upgrade(Config(str(BACKEND_DIR / "alembic.ini")), "head")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Kiểm tra DB ngay khi khởi động để lỗi hiện rõ trong terminal, không đợi tới lúc đăng nhập mới 500."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        if not inspect(engine).has_table("users"):
+            if settings.AUTO_MIGRATE and engine.dialect.name != "sqlite":
+                log.warning("DB chưa có bảng -> tự chạy alembic upgrade head ...")
+                _run_migrations()
+                log.info("Migrate xong.")
+            else:
+                log.error("DB chưa có bảng 'users'. Chạy: alembic upgrade head (trong thư mục backend).")
+    except Exception as exc:  # noqa: BLE001  không chặn server khởi động, chỉ cảnh báo rõ ràng
+        log.error("DB CHƯA SẴN SÀNG: %s | %s", describe_db_error(exc), exc)
+    yield
+
 
 TAGS = [
     {"name": "system", "description": "Kiểm tra tình trạng server / DB"},
@@ -40,6 +71,7 @@ app = FastAPI(
         "Mọi lỗi trả về dạng `{\"error\": {\"code\", \"message\", \"details\"}}`."
     ),
     openapi_tags=TAGS,
+    lifespan=lifespan,
     swagger_ui_parameters={"persistAuthorization": True},
 )
 

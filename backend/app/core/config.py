@@ -10,8 +10,9 @@ class Settings(BaseSettings):
     APP_ENV: str = "dev"  # dev | prod
     API_PREFIX: str = "/api"
 
-    DATABASE_URL: str = "mysql+pymysql://smartsplit:smartsplit@localhost:3306/smartsplit"
+    DATABASE_URL: str = "mysql+pymysql://smartsplit:smartsplit@127.0.0.1:3307/smartsplit"
     DB_ECHO: bool = False
+    AUTO_MIGRATE: bool = True  # dev: tự chạy `alembic upgrade head` khi khởi động nếu DB (MySQL) còn trống
 
     JWT_SECRET: str = "change-me-in-.env"
     JWT_ALGORITHM: str = "HS256"
