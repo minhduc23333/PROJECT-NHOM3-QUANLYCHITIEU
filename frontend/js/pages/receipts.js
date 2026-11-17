@@ -1,23 +1,11 @@
 // T05E174 - UI-03: Danh sách hóa đơn
 // - Chọn nhóm, danh sách hóa đơn của nhóm, badge trạng thái DRAFT / VERIFIED / SETTLED
-// - Nút "+ Thêm hóa đơn": tải ảnh JPG/PNG (≤ 5 MB) -> tạo hóa đơn nháp (DRAFT)
+// - Nút "+ Thêm hóa đơn": mở trang tải ảnh & đọc hóa đơn (#/receipts/new, T05E175)
 // - Lọc cơ bản: theo trạng thái, tìm theo tên cửa hàng, sắp xếp
 import { get, post, upload } from "../api.js";
 import { formatDate, formatVND } from "../format.js";
-import {
-  clearFieldErrors,
-  dataTable,
-  emptyHTML,
-  esc,
-  renderState,
-  selectField,
-  showFieldErrors,
-  toast,
-  withBusy,
-} from "../ui.js";
+import { dataTable, emptyHTML, esc, renderState, selectField } from "../ui.js";
 
-const MAX_MB = 5;
-const IMAGE_TYPES = ["image/jpeg", "image/png"];
 
 export const STATUS = {
   DRAFT: { label: "Nháp", cls: "rc-badge-draft", hint: "Chưa xác nhận, còn sửa được" },
@@ -72,9 +60,16 @@ function ensureStyles() {
 
 const ICON =
   '<svg viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9.5 8h5M9.5 12h5M9.5 16h3"/></svg>';
+// Hóa đơn nháp: trạng thái đọc ảnh (OCR) + link mở trang tải ảnh để đọc tiếp / nhập tay (T05E175)
 const OCR = {
-  PENDING: '<span class="text-muted small d-block">Chờ đọc ảnh</span>',
-  FAILED: '<span class="text-danger small d-block">Đọc ảnh lỗi</span>',
+  PENDING: { text: "Chờ đọc ảnh", cls: "text-muted", action: "Đọc ngay" },
+  FAILED: { text: "Đọc ảnh lỗi", cls: "text-danger", action: "Nhập tay" },
+  DONE: { text: "", cls: "", action: "Kiểm tra & sửa" },
+};
+const ocrHint = (r) => {
+  const o = r.status === "DRAFT" ? OCR[r.ocr_status ?? "PENDING"] : null;
+  if (!o) return "";
+  return `<span class="small d-block"><span class="${o.cls}">${o.text}${o.text ? " · " : ""}</span><a href="#/receipts/new?receipt=${r.id}" style="color:#7a62a3">${o.action}</a></span>`;
 };
 
 export const statusBadge = (s) => {
@@ -131,10 +126,9 @@ export function render(el, params) {
           <div class="text-muted">Hóa đơn của từng nhóm và trạng thái chia tiền</div>
         </div>
       </div>
-      <button class="btn btn-primary d-none" id="btn-add" aria-expanded="false" aria-controls="upload-panel">+ Thêm hóa đơn</button>
+      <a class="btn btn-primary d-none" id="btn-add" href="#/receipts/new">+ Thêm hóa đơn</a>
     </div>
     <div id="picker"></div>
-    <div id="upload-panel" class="card mb-3 d-none"></div>
     <div id="filters" class="d-none"></div>
     <div id="list"></div>
   </div>`;
@@ -142,13 +136,13 @@ export function render(el, params) {
   const list = el.querySelector("#list");
   const filters = el.querySelector("#filters");
   const addBtn = el.querySelector("#btn-add");
-  const panel = el.querySelector("#upload-panel");
 
   const syncUrl = () => {
     const qs = new URLSearchParams({ group: state.groupId });
     if (state.status !== "ALL") qs.set("status", state.status);
     // Đổi địa chỉ mà không vẽ lại trang (để giữ bộ lọc khi tải lại / gửi link)
     history.replaceState(null, "", `#/receipts?${qs}`);
+    addBtn.setAttribute("href", `#/receipts/new?group=${state.groupId}`);
   };
 
   /* ---------- Danh sách + bộ lọc ---------- */
@@ -159,7 +153,7 @@ export function render(el, params) {
       title: "Cửa hàng",
       render: (v, r) =>
         (v ? `<span class="fw-semibold">${esc(v)}</span>` : '<span class="text-muted fst-italic">Chưa có tên</span>') +
-        (r.status === "DRAFT" ? OCR[r.ocr_status] ?? "" : ""),
+        ocrHint(r),
     },
     {
       key: "payer_id",
@@ -179,7 +173,7 @@ export function render(el, params) {
             <div style="min-width:0">
               ${r.merchant_name ? `<div class="fw-semibold text-truncate">${esc(r.merchant_name)}</div>` : '<div class="text-muted fst-italic">Chưa có tên</div>'}
               <div class="text-muted small">${formatDate(r.receipt_date ?? r.created_at)} · ${r.payer_id ? esc(state.members.get(r.payer_id) ?? "") : "Chưa chọn người trả"}</div>
-              ${r.status === "DRAFT" ? OCR[r.ocr_status] ?? "" : ""}
+              ${ocrHint(r)}
             </div>
             <div class="text-end flex-shrink-0">
               <div class="fw-semibold">${formatVND(r.total_amount)}</div>
@@ -553,7 +547,6 @@ function renderOcrResult(data, error = null) {
       })}</div>`;
       box.querySelector("select").onchange = (e) => {
         Object.assign(state, { groupId: e.target.value, status: "ALL", q: "" });
-        togglePanel(false);
         syncUrl();
         loadReceipts();
       };

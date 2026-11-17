@@ -13,6 +13,7 @@ import * as register from "./pages/register.js";
 import * as dashboard from "./pages/dashboard.js";
 import * as groups from "./pages/groups.js";
 import * as receipts from "./pages/receipts.js";
+import * as upload from "./pages/upload.js";
 import * as debts from "./pages/debts.js";
 import * as notFound from "./pages/notfound.js";
 import * as uiDemo from "./pages/ui-demo.js";
@@ -23,6 +24,7 @@ addRoute("/", dashboard.render);
 addRoute("/groups", groups.render);
 addRoute("/groups/:id", groups.renderDetail);
 addRoute("/receipts", receipts.render);
+addRoute("/receipts/new", upload.render);
 addRoute("/debts", debts.render);
 addRoute("/dev/ui", uiDemo.render);
 
