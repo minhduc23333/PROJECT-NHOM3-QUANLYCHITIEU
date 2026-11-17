@@ -1,4 +1,3 @@
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,7 +13,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "mysql+pymysql://smartsplit:smartsplit@localhost:3306/smartsplit"
     DB_ECHO: bool = False
 
-    JWT_SECRET: str = Field(min_length=32)
+    JWT_SECRET: str = "change-me-in-.env"
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 60 * 24
 
@@ -35,3 +34,6 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+if settings.APP_ENV == "prod" and len(settings.JWT_SECRET) < 32:
+    raise RuntimeError("JWT_SECRET quá ngắn cho môi trường prod (cần >= 32 ký tự).")
