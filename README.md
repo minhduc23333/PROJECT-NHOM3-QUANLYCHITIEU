@@ -14,7 +14,7 @@ python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\a
 pip install -r requirements.txt   # OCR cần Tesseract + gói 'vie' (Linux: apt install tesseract-ocr tesseract-ocr-vie)
 cp .env.example .env        # rồi ĐỔI JWT_SECRET (>= 32 ký tự):
                             # python -c "import secrets; print(secrets.token_urlsafe(48))"
-alembic upgrade head        # tạo bảng
+alembic upgrade head        # tạo bảng (dev: bỏ qua cũng được, backend tự migrate khi khởi động nếu DB trống)
 python -m scripts.seed      # (tùy chọn) 3 user demo + 1 nhóm, mật khẩu 123456
 uvicorn app.main:app --reload --port 8000
 ```
@@ -33,7 +33,7 @@ cd backend && pytest
 | Method | Đường dẫn | Mô tả |
 |---|---|---|
 | GET | `/api/health` | Kiểm tra server và DB (`/health` cũng được hỗ trợ) |
-| POST | `/api/auth/register` | Đăng ký (`full_name`, `email`, `password` ≥ 8 ký tự). Trả 201 + token. Email trùng → 409 |
+| POST | `/api/auth/register` | Đăng ký (`full_name`, `email`, `password` 6–72 ký tự). Trả 201 + token. Email trùng → 409 |
 | POST | `/api/auth/login` | Đăng nhập (`email`, `password`). Trả token |
 | GET | `/api/auth/me` | Thông tin người dùng hiện tại (header `Authorization: Bearer <token>`) |
 
@@ -46,6 +46,13 @@ cd backend && pytest
 | POST / PATCH / DELETE | `/api/receipts/{id}/items[/{item_id}]` | CRUD dòng món (người tải lên hoặc Leader). Khi `VERIFIED` → tự về `DRAFT`; `SETTLED` → 409; `line_total` tự tính = SL × đơn giá |
 | POST | `/api/receipts/{id}/verify` | Body `{payer_id}`. Tổng tiền khớp → `VERIFIED`; sai → 422 kèm danh sách lỗi |
 | POST | `/api/receipts/{id}/settle` | `VERIFIED` → `SETTLED` (người tải lên hoặc Leader) |
+| GET | `/api/receipts/{id}/selections` | Ai chọn món nào: tổng tạm tính từng thành viên (món + thuế/phí chia theo tỉ lệ) + danh sách món chưa ai chọn |
+| PUT / DELETE | `/api/receipts/{id}/items/{item_id}/selection` | Chọn / bỏ chọn món cho **chính mình** (idempotent, nhiều người chọn 1 món → chia đều). Dùng khi `DRAFT`/`VERIFIED`; `SETTLED` → 409. Trả lại bảng tạm tính |
+| POST | `/api/receipts/{id}/split` | **Chỉ Leader** chốt: cần `VERIFIED`, không còn món chưa ai chọn, tổng tiền khớp (không thì 422 kèm `details`). Ghi `split_details` + `debts` (chỉ người ≠ người trả, số tiền > 0) và chuyển `SETTLED` trong **1 transaction** |
+| GET | `/api/receipts/{id}/debts` | Công nợ của 1 hóa đơn (`?status=OPEN\|PAID`, `?mine=true`) |
+| GET | `/api/groups/{id}/debts` | Công nợ của cả nhóm, cùng bộ lọc. Chỉ thành viên ACTIVE; người ngoài → 403 |
+
+Quy tắc chia (`backend/app/modules/split/calc.py`): món k người chọn → chia đều; thuế + phí chia theo tỉ lệ phần món; mỗi người làm tròn **xuống** tới đồng, phần lẻ dồn cho **người trả tiền** (cộng vào `fee_amount`) nên `Σ final_amount = total_amount`. Nợ: `debtor` (người phải trả) → `creditor` (người trả hóa đơn). Selection của người đã bị gỡ khỏi nhóm bị bỏ qua. `POST .../settle` cũ vẫn chỉ đổi trạng thái, **không** chia tiền — dùng `/split` để chốt có công nợ.
 
 Luồng: `DRAFT` → verify → `VERIFIED` → settle → `SETTLED` (logic ở `backend/app/modules/receipts/state.py`).
 

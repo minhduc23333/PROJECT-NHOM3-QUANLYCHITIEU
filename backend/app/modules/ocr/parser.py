@@ -107,7 +107,7 @@ _SUMMARY_KEYS = [
     ("total", ("tong cong", "tong thanh toan", "tong tien", "tong so tien", "can thanh toan",
                "phai thanh toan", "thanh toan", "grand total", "total", "tong")),
 ]
-_SKIP_KEYS = ("khach dua", "tien thua", "tra lai", "tien mat", "the ", "giam gia", "discount",
+_SKIP_KEYS = ("khach dua", "tien thua", "tien thi", "tra lai", "tien mat", "tienmat", "the ", "discount",
               "dt:", "d/c", "sdt", "tel", "hotline", "mst", "ma so thue", "dia chi", "address",
               "so hoa don", "hoa don so", "ban so", "thu ngan", "cashier", "so bill", "bill no")
 _HEADER_WORDS = ("hoa don", "phieu", "bill", "receipt", "invoice", "dia chi", "dt", "tel",
@@ -221,15 +221,58 @@ def parse_item_line(line: str) -> tuple[ParsedItem | None, str | None]:
     return ParsedItem(name, qty, unit_price, line_total), warning
 
 
+_PAYMENT_ZONE_KEYS = ("diem tren", "tien mat", "tienmat", "tien thua", "tien thi",
+                      "khach dua", "tra lai", "da bao gom", "da bao gdm")
+_TOTAL_AFTER_DISCOUNT = ("da bao gom giam gia", "da bao gdm giam gia", "bao gom giam gia", "bao gdm giam gia")
+
+
+def _numbers_only(line: str) -> bool:
+    """Dòng chỉ gồm số/dấu (vd '1 17,000 17,000', '1.264 66,060 49,005') -> dòng chi tiết của món ở dòng trên."""
+    return sum(c.isalpha() for c in line) == 0 and any(c.isdigit() for c in line)
+
+
+def parse_qty_price_total(line: str, name: str) -> tuple[ParsedItem | None, str | None]:
+    """'SL đơn_giá thành_tiền' (SL có thể thập phân như 0.49 / 1.264) -> ParsedItem với tên lấy từ dòng trên."""
+    nums = re.findall(r"\d+(?:[.,]\d{3})+|\d+(?:[.,]\d{1,2})?", line)
+    if len(nums) < 3:
+        return None, None
+    qty_s, price_s, total_s = nums[0], nums[1], nums[-1]
+    qty = Decimal(qty_s.replace(",", "."))   # SL luôn là số thập phân kiểu 0.49 / 1.264 (kg), không phải hàng nghìn
+    unit_price, line_total = parse_money(price_s), parse_money(total_s)
+    if unit_price is None or line_total is None or line_total < MIN_LINE_TOTAL:
+        return None, None
+    name = _clean_name(name)
+    if sum(c.isalpha() for c in name) < 2:
+        return None, None
+    warning = None
+    if abs(qty * unit_price - line_total) > max(Decimal(1), line_total * Decimal("0.02")):
+        warning = f"Dòng '{name}': {qty} × {unit_price} ≠ {line_total}, cần kiểm tra"
+    return ParsedItem(name, qty, unit_price, line_total), warning
+
+
 def parse_receipt(lines: list[str]) -> ParsedReceipt:
     """Entry point: danh sách dòng OCR (trên -> dưới) -> ParsedReceipt."""
     lines = [l.strip() for l in lines if l and l.strip()]
     result = ParsedReceipt(merchant_name=find_merchant(lines), receipt_date=find_date(lines))
 
-    in_items_zone = True  # sau khi gặp dòng tổng kết đầu tiên thì không nhận dòng món nữa
+    in_items_zone = True  # sau khi gặp dòng tổng kết/thanh toán đầu tiên thì không nhận dòng món nữa
     totals_seen: dict[str, Decimal] = {}
+    pending_name: str | None = None   # tên món ở dòng trên, số nằm ở dòng dưới (kiểu Bách Hóa Xanh)
     for line in lines:
         f = fold(line)
+        # "(Đã bao gồm giảm giá) 242.841" = tổng phải trả, không phải dòng giảm giá
+        if any(k in f for k in _TOTAL_AFTER_DISCOUNT):
+            toks = money_tokens(line, spaced=True)
+            if toks:
+                totals_seen["total"] = toks[-1][1]
+                in_items_zone = False
+            continue
+        if any(k in f for k in _PAYMENT_ZONE_KEYS) and not _numbers_only(line):
+            in_items_zone = False
+            continue
+        if re.fullmatch(r"\W*thanh toan\W*", f):   # tiêu đề "Thanh toán:" không số -> hết vùng món
+            in_items_zone = False
+            continue
         if any(k in f for k in _SKIP_KEYS) or _DATE_RE.search(line):
             continue
         kind = classify_summary(f)
@@ -237,15 +280,28 @@ def parse_receipt(lines: list[str]) -> ParsedReceipt:
             tokens = money_tokens(line, spaced=True)
             if tokens:  # dòng tiêu đề như "HÓA ĐƠN THANH TOÁN" không có số -> chưa hết vùng món
                 in_items_zone = False
-                # lấy số cuối dòng; "tổng" lặp lại nhiều lần -> lấy lần xuất hiện cuối
                 totals_seen[kind] = tokens[-1][1]
             continue
-        if in_items_zone:
-            item, warning = parse_item_line(line)
-            if item:
-                result.items.append(item)
-                if warning:
-                    result.warnings.append(warning)
+        if not in_items_zone:
+            continue
+        if _numbers_only(line):
+            if pending_name:
+                item, warning = parse_qty_price_total(line, pending_name)
+                if item:
+                    result.items.append(item)
+                    if warning:
+                        result.warnings.append(warning)
+            pending_name = None
+            continue
+        item, warning = parse_item_line(line)
+        if item:
+            result.items.append(item)
+            if warning:
+                result.warnings.append(warning)
+            pending_name = None
+        elif sum(c.isalpha() for c in line) >= 3:
+            pending_name = line      # dòng chữ thuần -> có thể là tên món của dòng số bên dưới
+        # dòng rác (".", "_", "|"): giữ nguyên pending_name
 
     result.subtotal = totals_seen.get("subtotal")
     result.tax_amount = totals_seen.get("tax")
