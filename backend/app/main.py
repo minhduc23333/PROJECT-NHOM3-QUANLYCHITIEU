@@ -57,7 +57,7 @@ TAGS = [
     {"name": "groups", "description": "Nhóm chi tiêu và thành viên"},
     {"name": "receipts", "description": "Hóa đơn"},
     {"name": "ocr", "description": "Đọc hóa đơn từ ảnh"},
-    {"name": "split", "description": "Chọn món, chia tiền, công nợ (chưa triển khai)"},
+    {"name": "split", "description": "Chọn món, chốt chia tiền, công nợ"},
     {"name": "dashboard", "description": "Số liệu tổng quan"},
 ]
 
