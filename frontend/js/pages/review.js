@@ -166,6 +166,7 @@ export function render(el, params) {
       <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
         <h2 class="page-title mb-0">Kiểm tra hóa đơn</h2>
         <span class="rv-badge ${st.cls}" title="${esc(d.status)}">${st.text}</span>
+        ${d.group_id && d.status !== "DRAFT" ? `<a class="btn btn-sm btn-primary ms-auto" href="#/receipts/${d.id}/split">${d.status === "SETTLED" ? "Xem kết quả chia" : "Chia tiền →"}</a>` : ""}
         <span class="text-muted small ms-1">${esc(d.group_name ? `Nhóm: ${d.group_name}` : "Cá nhân")} · tải lên ${formatDateTime(d.created_at)}</span>
       </div>
       <div class="row g-4">

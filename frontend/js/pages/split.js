@@ -1,0 +1,334 @@
+// T05E17B - UI-06: Chia hóa đơn (#/receipts/:id/split)
+// Bảng món × thành viên có checkbox, đơn giá, tổng tạm tính từng người, tô nổi món chưa ai chọn,
+// nút Chốt chia (chỉ Trưởng nhóm), hiển thị lý do không chốt được.
+import { del, get, post, put } from "../api.js";
+import { getUser } from "../auth.js";
+import { formatNumber, formatVND } from "../format.js";
+import { confirmDialog, emptyHTML, esc, toast, withBusy } from "../ui.js";
+
+const STATUS = {
+  DRAFT: { text: "Nháp", cls: "sp-st-draft" },
+  VERIFIED: { text: "Đã xác nhận", cls: "sp-st-verified" },
+  SETTLED: { text: "Đã chốt", cls: "sp-st-settled" },
+};
+const num = (v) => Number(v ?? 0) || 0;
+const initials = (name = "") => {
+  const p = String(name).trim().split(/\s+/).filter(Boolean);
+  return p.length ? (p[0][0] + (p.length > 1 ? p[p.length - 1][0] : "")).toUpperCase() : "?";
+};
+
+/** Lý do chưa chốt được, tính trước ở giao diện (backend vẫn kiểm tra lại). Tách riêng để dễ test. */
+export function blockers({ status, payerId, memberIds, items, selectorsByItem, subtotal, total, fee }) {
+  const out = [];
+  if (status === "DRAFT") out.push({ kind: "draft", text: "Hóa đơn chưa được xác nhận. Cần kiểm tra & xác nhận trước khi chốt chia." });
+  if (status === "SETTLED") return [];
+  if (payerId == null || !memberIds.includes(payerId)) out.push({ kind: "payer", text: "Chưa có người ứng tiền, hoặc người đó không còn trong nhóm." });
+  if (!items.length) out.push({ kind: "items", text: "Hóa đơn chưa có dòng món nào." });
+  const free = items.filter((i) => !(selectorsByItem.get(i.id)?.length));
+  if (free.length) out.push({ kind: "unselected", text: `Còn ${free.length} món chưa ai chọn: ${free.map((i) => i.item_name).join(", ")}.` });
+  const itemsSum = items.reduce((s, i) => s + num(i.line_total), 0);
+  if (items.length && subtotal != null && Math.round(num(subtotal)) !== Math.round(itemsSum))
+    out.push({ kind: "subtotal", text: `Tạm tính ${formatVND(subtotal)} khác tổng các món ${formatVND(itemsSum)}.` });
+  if (total == null) out.push({ kind: "total", text: "Hóa đơn chưa có tổng tiền." });
+  else if (Math.round(num(total)) !== Math.round(itemsSum + fee))
+    out.push({ kind: "total", text: `Tổng tiền ${formatVND(total)} khác tổng món + thuế + phí ${formatVND(itemsSum + fee)}.` });
+  return out;
+}
+
+const CSS = `
+.page-split { --ink:#464052; --muted:#6f687c; --line:#e9ddf7; --mist:#f3edfb; --brand-dark:#7a62a3;
+  --grad: linear-gradient(100deg,#f0b0c3 0%,#d9b5d9 50%,#b6a1d4 100%); color: var(--ink); }
+.page-split .page-title { font-size: clamp(1.6rem,3vw,2.1rem); font-weight:800 !important; letter-spacing:-.03em; line-height:1.15;
+  background: linear-gradient(95deg,#464052 0%,#7a62a3 60%,#c27a9b 100%); -webkit-background-clip:text; background-clip:text; color:transparent !important; }
+.page-split .card { border:1px solid var(--line); border-radius:16px; }
+.page-split .btn-primary { background:var(--grad); border:0; color:var(--ink); font-weight:600; box-shadow:0 8px 18px -12px rgba(182,161,212,.9); }
+.page-split .btn-primary:hover, .page-split .btn-primary:focus-visible { background:linear-gradient(100deg,#eba1b7 0%,#d1a8d2 50%,#a993cb 100%); color:var(--ink); }
+.page-split .btn-primary:disabled { background:var(--grad); color:var(--ink); opacity:.5; }
+.sp-badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:.78rem; font-weight:600; }
+.sp-st-draft { background:#ece8f1; color:#5b5568; } .sp-st-verified { background:#e9ddf7; color:#5a4790; } .sp-st-settled { background:#fce4ec; color:#a0516e; }
+.sp-facts { display:flex; flex-wrap:wrap; gap:8px 20px; color:var(--muted); font-size:.9rem; }
+.sp-facts b { color:var(--ink); }
+.notice { border-radius:14px; padding:12px 14px; display:flex; gap:10px; align-items:flex-start; }
+.notice-info { background:var(--mist); border:1px solid var(--line); }
+.notice-warn { background:#fff8ec; border:1px solid #f5dcae; color:#7a4e00; }
+.notice-fail { background:#fff4f6; border:1px solid #f3c6d2; color:#7d2f48; }
+.notice-ok { background:#effaf4; border:1px solid #c6e9d6; color:#24543d; }
+.mx-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:14px; background:#fff; }
+.mx { border-collapse:separate; border-spacing:0; width:100%; min-width:560px; font-size:.92rem; }
+.mx th, .mx td { padding:10px 12px; border-bottom:1px solid #f1ecf8; white-space:nowrap; }
+.mx thead th { background:#faf8fd; font-weight:600; color:var(--muted); vertical-align:bottom; }
+.mx .c-item { position:sticky; left:0; background:#fff; z-index:1; min-width:180px; white-space:normal; }
+.mx thead .c-item { background:#faf8fd; }
+.mx .c-mem { text-align:center; min-width:96px; }
+.mx .c-mem.me { background:#f7f2fd; }
+.mx thead .c-mem.me { background:#efe6fa; }
+.mx .c-num { text-align:right; }
+.mx tr.free td { background:#fff6e5; }
+.mx tr.free .c-item { background:#fff6e5; box-shadow: inset 4px 0 0 #f0b04a; }
+.free-tag { display:inline-block; margin-left:6px; padding:1px 8px; border-radius:999px; background:#ffe3ad; color:#7a4e00; font-size:.72rem; font-weight:700; }
+.mx tfoot td { background:#faf8fd; font-weight:600; border-bottom:0; }
+.mx tfoot tr.grand td { font-size:1rem; font-weight:800; border-top:2px solid var(--line); }
+.mx tfoot .c-item { background:#faf8fd; }
+.mem-head { display:flex; flex-direction:column; align-items:center; gap:4px; }
+.mem-ava { width:30px; height:30px; border-radius:50%; display:grid; place-items:center; font-size:.72rem; font-weight:700; background:#e9ddf7; color:#6c56a0; }
+.c-mem.me .mem-ava { background:var(--grad); color:var(--ink); }
+.mem-tag { font-size:.68rem; font-weight:600; color:var(--brand-dark); }
+.mx input[type=checkbox] { width:20px; height:20px; accent-color:#a993cb; cursor:pointer; }
+.mx input[type=checkbox]:disabled { cursor:default; opacity:.85; }
+.mx .busy { opacity:.4; }
+.tick { display:inline-grid; place-items:center; width:22px; height:22px; border-radius:6px; color:#c9c2d4; font-weight:700; }
+.tick.on { background:#b6a1d4; color:#fff; }
+.cnt { display:inline-block; min-width:22px; padding:0 6px; border-radius:999px; background:var(--mist); font-size:.75rem; font-weight:700; text-align:center; }
+.reasons { margin:6px 0 0; padding-left:18px; }
+.reasons li { margin:2px 0; }
+.result-list { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+.result-list li { display:flex; justify-content:space-between; gap:12px; padding:10px 12px; border:1px solid var(--line); border-radius:12px; background:#fff; }
+/* Điện thoại: mỗi món một thẻ (bảng nhiều cột vẫn xem được bằng cách cuộn ngang) */
+.m-list { display:none; }
+@media (max-width: 575.98px) {
+  .mx-wrap { display:none; }
+  .m-list { display:grid; gap:10px; }
+  .m-item { border:1px solid var(--line); border-radius:14px; padding:12px; background:#fff; }
+  .m-item.free { background:#fff6e5; border-color:#f5dcae; box-shadow: inset 4px 0 0 #f0b04a; }
+  .m-chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+  .m-chip { padding:2px 8px; border-radius:999px; background:var(--mist); font-size:.75rem; }
+  .m-chip.me { background:#e5d9f7; font-weight:700; }
+  .m-toggle { display:flex; align-items:center; gap:8px; margin-top:8px; font-weight:600; }
+  .m-toggle input { width:22px; height:22px; accent-color:#a993cb; }
+}
+`;
+function ensureStyles() {
+  if (document.getElementById("split-css")) return;
+  const st = document.createElement("style");
+  st.id = "split-css";
+  st.textContent = CSS;
+  document.head.appendChild(st);
+}
+
+export function render(el, params) {
+  ensureStyles();
+  const id = params.id;
+  const meId = getUser()?.id;
+  el.innerHTML = `<div class="page-split"><div id="sp"><div class="text-muted p-3">Đang tải...</div></div></div>`;
+  const box = el.querySelector("#sp");
+  const st = { receipt: null, summary: null, group: null, error: null, result: null, debts: null };
+
+  async function load() {
+    try {
+      st.receipt = await get(`/receipts/${encodeURIComponent(id)}`);
+      if (!st.receipt.group_id) {
+        box.innerHTML = backLink() + `<div class="card"><div class="card-body">${emptyHTML("Hóa đơn cá nhân không cần chia tiền theo nhóm.", { actionText: "Về hóa đơn", actionHref: `#/receipts/${id}` })}</div></div>`;
+        return;
+      }
+      [st.summary, st.group] = await Promise.all([get(`/receipts/${id}/selections`), get(`/groups/${st.receipt.group_id}`)]);
+      st.debts = st.receipt.status === "SETTLED" ? await get(`/receipts/${id}/debts`).catch(() => null) : null;
+    } catch (e) {
+      box.innerHTML = backLink() + `<div class="card"><div class="card-body">${emptyHTML(e.message, { actionText: "Về danh sách hóa đơn", actionHref: "#/receipts" })}</div></div>`;
+      return;
+    }
+    paint();
+  }
+
+  const backLink = () =>
+    `<a href="#/receipts${st.receipt?.group_id ? `?group=${st.receipt.group_id}` : ""}" class="d-inline-block mb-2" style="color:#7a62a3;text-decoration:none">‹ Danh sách hóa đơn</a>`;
+
+  function paint() {
+    const r = st.receipt;
+    const s = st.summary;
+    const items = r.items ?? [];
+    const members = s.members; // mọi thành viên ACTIVE, kể cả chưa chọn
+    const memberIds = members.map((m) => m.user_id);
+    const isLeader = st.group?.my_role === "LEADER";
+    const settled = r.status === "SETTLED";
+    const canSelect = s.can_select && memberIds.includes(meId);
+    const fee = num(s.fee_total);
+    const selectorsByItem = new Map(items.map((i) => [i.id, members.filter((m) => m.selected_item_ids.includes(i.id))]));
+    const freeIds = new Set(s.unselected_items.map((u) => u.id));
+    const payer = members.find((m) => m.user_id === r.payer_id);
+    const roleOf = new Map((st.group?.members ?? []).map((m) => [m.user_id, m.role]));
+    const reasons = blockers({ status: r.status, payerId: r.payer_id, memberIds, items, selectorsByItem, subtotal: r.subtotal, total: r.total_amount, fee });
+    const sumShares = members.reduce((t, m) => t + num(m.total), 0);
+    const statusInfo = STATUS[r.status] ?? { text: r.status, cls: "" };
+    // Sau khi chốt: số tiền thật lấy từ công nợ (người ứng tiền nhận phần lẻ làm tròn = tổng - phần người khác)
+    const finalOf = new Map();
+    if (settled && st.debts?.items) {
+      const owed = st.debts.items.reduce((t, d) => t + num(d.amount), 0);
+      st.debts.items.forEach((d) => finalOf.set(d.debtor_id, num(d.amount)));
+      finalOf.set(r.payer_id, num(r.total_amount) - owed);
+    }
+    const shareOf = (m) => finalOf.get(m.user_id) ?? num(m.total);
+    const sumShown = members.reduce((t, m) => t + shareOf(m), 0);
+
+    // Cột thành viên: tôi đứng đầu, sau đó người ứng tiền, rồi theo tên
+    const cols = [...members].sort(
+      (a, b) => (b.user_id === meId) - (a.user_id === meId) || (b.user_id === r.payer_id) - (a.user_id === r.payer_id) || a.full_name.localeCompare(b.full_name, "vi"),
+    );
+    const memHead = (m) => {
+      const tags = [m.user_id === meId ? "Tôi" : "", m.user_id === r.payer_id ? "Ứng tiền" : "", roleOf.get(m.user_id) === "LEADER" ? "Trưởng nhóm" : ""].filter(Boolean);
+      return `<th class="c-mem ${m.user_id === meId ? "me" : ""}" scope="col">
+        <div class="mem-head"><span class="mem-ava" aria-hidden="true">${esc(initials(m.full_name))}</span>
+        <span>${esc(m.full_name)}</span>${tags.length ? `<span class="mem-tag">${tags.join(" · ")}</span>` : ""}</div></th>`;
+    };
+    const cell = (item, m) => {
+      const on = m.selected_item_ids.includes(item.id);
+      const mine = m.user_id === meId;
+      const label = `${m.full_name} ${on ? "đã chọn" : "chưa chọn"} ${item.item_name}`;
+      // Cột của tôi: checkbox bấm được. Cột người khác: chỉ hiển thị (✓ đã chọn / – chưa chọn)
+      if (mine && canSelect)
+        return `<td class="c-mem me"><input type="checkbox" ${on ? "checked" : ""} data-item="${item.id}" aria-label="${esc(label)}"></td>`;
+      return `<td class="c-mem ${mine ? "me" : ""}"><span class="tick ${on ? "on" : ""}" role="img" aria-label="${esc(label)}">${on ? "✓" : "–"}</span></td>`;
+    };
+
+    let notice = "";
+    if (settled)
+      notice = `<div class="notice notice-ok mb-3"><span>🔒</span><div><b>Hóa đơn đã chốt chia.</b> Các khoản nợ đã được tạo, không chọn món được nữa.</div></div>`;
+    else if (r.status === "DRAFT")
+      notice = `<div class="notice notice-warn mb-3"><span>⚠</span><div>Hóa đơn đang là <b>Nháp</b>. Mọi người vẫn tick món được, nhưng phải <a href="#/receipts/${r.id}">kiểm tra & xác nhận</a> trước khi chốt.</div></div>`;
+    else
+      notice = `<div class="notice notice-info mb-3"><span>ℹ</span><div>Mỗi người tự tick <b>các món mình đã dùng</b> ở cột của mình. Nhiều người cùng tick một món thì món đó được <b>chia đều</b>. Thuế và phí chia theo tỉ lệ tiền món.</div></div>`;
+
+    const errorBox = st.error
+      ? `<div class="notice notice-fail mb-3" role="alert" id="sp-error"><span>✕</span><div><b>${esc(st.error.message)}</b>
+          ${st.error.details?.length ? `<ul class="reasons">${st.error.details.map((d) => `<li>${esc(d.message)}</li>`).join("")}</ul>` : ""}</div></div>`
+      : "";
+
+    const result = settled
+      ? `<div class="card mt-3"><div class="card-body">
+          <h5 class="mb-3">Kết quả chia</h5>
+          <ul class="result-list">${cols
+            .map((m) => `<li><span>${esc(m.full_name)}${m.user_id === r.payer_id ? ' <span class="mem-tag">· người ứng tiền</span>' : ""}</span><b>${formatVND(shareOf(m))}</b></li>`)
+            .join("")}</ul>
+          ${st.debts?.items?.length
+            ? `<h6 class="mt-4 mb-2">Công nợ phát sinh</h6><ul class="result-list">${st.debts.items
+                .map((d) => `<li><span>${esc(d.debtor_name)} → ${esc(d.creditor_name)}</span><b>${formatVND(d.amount)}</b></li>`)
+                .join("")}</ul>`
+            : ""}
+        </div></div>`
+      : "";
+
+    box.innerHTML = `
+      ${backLink()}
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+        <h2 class="page-title mb-0">Chia hóa đơn</h2>
+        <span class="sp-badge ${statusInfo.cls}" title="${esc(r.status)}">${statusInfo.text}</span>
+        <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" id="btn-reload" title="Xem lựa chọn mới nhất của mọi người">↻ Làm mới</button>
+      </div>
+      <div class="sp-facts mb-3">
+        <span>${esc(r.merchant_name || "Hóa đơn chưa có tên")}</span>
+        <span>Nhóm: <b>${esc(st.group?.name ?? "")}</b></span>
+        <span>Tổng: <b>${formatVND(r.total_amount)}</b></span>
+        <span>Thuế + phí: <b>${formatVND(fee)}</b></span>
+        <span>Người ứng tiền: <b>${payer ? esc(payer.full_name) : "chưa chọn"}</b></span>
+        <a href="#/receipts/${r.id}" style="color:#7a62a3">Xem / sửa hóa đơn</a>
+      </div>
+      ${notice}
+      ${errorBox}
+
+      <div class="mx-wrap mb-3">
+        <table class="mx">
+          <thead><tr>
+            <th class="c-item" scope="col">Món</th>
+            <th class="c-num" scope="col">SL</th>
+            <th class="c-num" scope="col">Đơn giá</th>
+            <th class="c-num" scope="col">Thành tiền</th>
+            ${cols.map(memHead).join("")}
+            <th class="c-num" scope="col">Số người</th>
+          </tr></thead>
+          <tbody>${items
+            .map((i) => {
+              const free = freeIds.has(i.id);
+              return `<tr class="${free ? "free" : ""}">
+                <th class="c-item" scope="row">${esc(i.item_name)}${free ? '<span class="free-tag">Chưa ai chọn</span>' : ""}</th>
+                <td class="c-num">${formatNumber(i.quantity)}</td>
+                <td class="c-num">${formatVND(i.unit_price)}</td>
+                <td class="c-num">${formatVND(i.line_total)}</td>
+                ${cols.map((m) => cell(i, m)).join("")}
+                <td class="c-num"><span class="cnt">${selectorsByItem.get(i.id).length}</span></td>
+              </tr>`;
+            })
+            .join("")}</tbody>
+          <tfoot>
+            <tr><td class="c-item" colspan="4">Tiền món</td>${cols.map((m) => `<td class="c-mem ${m.user_id === meId ? "me" : ""}">${formatVND(m.item_amount)}</td>`).join("")}<td></td></tr>
+            <tr><td class="c-item" colspan="4">Thuế + phí (chia theo tỉ lệ)</td>${cols.map((m) => `<td class="c-mem ${m.user_id === meId ? "me" : ""}">${formatVND(m.fee_amount)}</td>`).join("")}<td></td></tr>
+            <tr class="grand"><td class="c-item" colspan="4">${settled ? "Số tiền mỗi người (đã chốt)" : "Tạm tính mỗi người"}</td>${cols.map((m) => `<td class="c-mem ${m.user_id === meId ? "me" : ""}">${formatVND(shareOf(m))}</td>`).join("")}<td class="c-num">${formatVND(sumShown)}</td></tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div class="m-list mb-3">${items
+        .map((i) => {
+          const free = freeIds.has(i.id);
+          const who = selectorsByItem.get(i.id);
+          const mine = who.some((m) => m.user_id === meId);
+          return `<div class="m-item ${free ? "free" : ""}">
+            <div class="d-flex justify-content-between gap-2"><b>${esc(i.item_name)}</b><b>${formatVND(i.line_total)}</b></div>
+            <div class="text-muted small">${formatNumber(i.quantity)} × ${formatVND(i.unit_price)}${free ? ' <span class="free-tag">Chưa ai chọn</span>' : ""}</div>
+            <div class="m-chips">${who.map((m) => `<span class="m-chip ${m.user_id === meId ? "me" : ""}">${esc(m.full_name)}</span>`).join("") || '<span class="text-muted small">Chưa có ai</span>'}</div>
+            ${canSelect ? `<label class="m-toggle"><input type="checkbox" ${mine ? "checked" : ""} data-item="${i.id}"> Tôi đã dùng món này</label>` : ""}
+          </div>`;
+        })
+        .join("")}
+        <div class="m-item"><b>Tạm tính mỗi người</b>${cols.map((m) => `<div class="d-flex justify-content-between mt-1"><span>${esc(m.full_name)}${m.user_id === meId ? " (tôi)" : ""}</span><b>${formatVND(m.total)}</b></div>`).join("")}</div>
+      </div>
+
+      ${settled ? "" : `<div class="card"><div class="card-body d-flex flex-wrap gap-3 align-items-center">
+        <div class="flex-grow-1" style="min-width:240px">
+          ${reasons.length
+            ? `<div class="fw-semibold">Chưa đủ điều kiện chốt:</div><ul class="reasons small mb-0">${reasons.map((x) => `<li>${esc(x.text)}</li>`).join("")}</ul>`
+            : `<div class="fw-semibold" style="color:#2f7a5a">✓ Đủ điều kiện chốt chia</div><div class="small text-muted">Tổng tạm tính các thành viên: ${formatVND(sumShares)} / ${formatVND(r.total_amount)}${Math.round(num(r.total_amount) - sumShares) > 0 ? ` (phần lẻ ${formatVND(num(r.total_amount) - sumShares)} do làm tròn sẽ tính cho người ứng tiền)` : ""}</div>`}
+        </div>
+        ${isLeader
+          ? `<button type="button" class="btn btn-primary btn-lg" id="btn-finalize">Chốt chia</button>`
+          : `<div class="small text-muted">Chỉ <b>Trưởng nhóm</b> mới chốt chia được.</div>`}
+      </div></div>`}
+      ${result}`;
+
+    /* ----- Tick / bỏ tick món của tôi ----- */
+    box.querySelectorAll("input[data-item]").forEach((cb) => {
+      cb.onchange = async () => {
+        const itemId = cb.dataset.item;
+        box.querySelectorAll(`input[data-item="${itemId}"]`).forEach((x) => (x.disabled = true, x.classList.add("busy")));
+        try {
+          st.summary = cb.checked
+            ? await put(`/receipts/${id}/items/${itemId}/selection`)
+            : await del(`/receipts/${id}/items/${itemId}/selection`);
+          st.error = null;
+        } catch (e) {
+          toast.error(e);
+          if (e.status === 409) return load(); // vừa có người chốt -> tải lại
+        }
+        paint();
+      };
+    });
+    box.querySelector("#btn-reload").onclick = () => {
+      st.error = null;
+      load();
+    };
+
+    /* ----- Chốt chia (Trưởng nhóm) ----- */
+    box.querySelector("#btn-finalize")?.addEventListener("click", async (ev) => {
+      const btn = ev.currentTarget;
+      const ok = await confirmDialog({
+        title: "Chốt chia hóa đơn?",
+        message: reasons.length
+          ? `Còn ${reasons.length} vấn đề, hệ thống có thể từ chối. Sau khi chốt, công nợ được tạo và không chọn món được nữa.`
+          : "Sau khi chốt, công nợ được tạo cho từng người và không chọn món được nữa.",
+        okText: "Chốt chia",
+      });
+      if (!ok) return;
+      try {
+        await withBusy(btn, () => post(`/receipts/${id}/split`));
+        st.error = null;
+        toast.success("Đã chốt chia hóa đơn");
+        await load();
+      } catch (e) {
+        // 422: liệt kê từng lý do; 409: sai trạng thái / đã chốt; 403: không phải Trưởng nhóm
+        st.error = { message: e.message, details: e.details };
+        paint();
+        box.querySelector("#sp-error")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
+  }
+
+  load();
+}

@@ -73,6 +73,11 @@ const ocrHint = (r) => {
   const href = (r.ocr_status ?? "PENDING") === "PENDING" ? `#/receipts/new?receipt=${r.id}` : `#/receipts/${r.id}`;
   return `<span class="small d-block"><span class="${o.cls}">${o.text}${o.text ? " · " : ""}</span><a href="${href}" style="color:#7a62a3">${o.action}</a></span>`;
 };
+// Hóa đơn đã xác nhận / đã chốt: link sang trang Chia hóa đơn (T05E17B)
+const splitLink = (r) =>
+  r.group_id && (r.status === "VERIFIED" || r.status === "SETTLED")
+    ? `<a href="#/receipts/${r.id}/split" class="small d-block mt-1" style="color:#7a62a3">${r.status === "VERIFIED" ? "Chia tiền →" : "Xem chia →"}</a>`
+    : "";
 // Tên cửa hàng bấm được để mở trang chi tiết / kiểm tra hóa đơn
 const merchantLink = (r) =>
   `<a href="#/receipts/${r.id}" class="fw-semibold text-reset text-decoration-none">${r.merchant_name ? esc(r.merchant_name) : '<span class="text-muted fst-italic fw-normal">Chưa có tên</span>'}</a>`;
@@ -166,7 +171,7 @@ export function render(el, params) {
       render: (v) => (v ? esc(state.members.get(v) ?? `#${v}`) : '<span class="text-muted">Chưa chọn</span>'),
     },
     { key: "total_amount", title: "Tổng tiền", align: "end", render: (v) => formatVND(v) },
-    { key: "status", title: "Trạng thái", render: (v) => statusBadge(v) },
+    { key: "status", title: "Trạng thái", render: (v, r) => statusBadge(v) + splitLink(r) },
   ];
 
   // Điện thoại: mỗi hóa đơn một thẻ, dễ đọc hơn bảng nhiều cột
@@ -182,7 +187,7 @@ export function render(el, params) {
             </div>
             <div class="text-end flex-shrink-0">
               <div class="fw-semibold">${formatVND(r.total_amount)}</div>
-              ${statusBadge(r.status)}
+              ${statusBadge(r.status)}${splitLink(r)}
             </div>
           </div>
         </div></li>`,
