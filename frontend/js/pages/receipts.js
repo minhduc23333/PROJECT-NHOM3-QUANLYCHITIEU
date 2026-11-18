@@ -69,8 +69,13 @@ const OCR = {
 const ocrHint = (r) => {
   const o = r.status === "DRAFT" ? OCR[r.ocr_status ?? "PENDING"] : null;
   if (!o) return "";
-  return `<span class="small d-block"><span class="${o.cls}">${o.text}${o.text ? " · " : ""}</span><a href="#/receipts/new?receipt=${r.id}" style="color:#7a62a3">${o.action}</a></span>`;
+  // Chờ đọc ảnh -> trang tải ảnh chạy OCR; còn lại -> trang Kiểm tra & xác nhận (T05E176)
+  const href = (r.ocr_status ?? "PENDING") === "PENDING" ? `#/receipts/new?receipt=${r.id}` : `#/receipts/${r.id}`;
+  return `<span class="small d-block"><span class="${o.cls}">${o.text}${o.text ? " · " : ""}</span><a href="${href}" style="color:#7a62a3">${o.action}</a></span>`;
 };
+// Tên cửa hàng bấm được để mở trang chi tiết / kiểm tra hóa đơn
+const merchantLink = (r) =>
+  `<a href="#/receipts/${r.id}" class="fw-semibold text-reset text-decoration-none">${r.merchant_name ? esc(r.merchant_name) : '<span class="text-muted fst-italic fw-normal">Chưa có tên</span>'}</a>`;
 
 export const statusBadge = (s) => {
   const m = STATUS[s];
@@ -152,7 +157,7 @@ export function render(el, params) {
       key: "merchant_name",
       title: "Cửa hàng",
       render: (v, r) =>
-        (v ? `<span class="fw-semibold">${esc(v)}</span>` : '<span class="text-muted fst-italic">Chưa có tên</span>') +
+        merchantLink(r) +
         ocrHint(r),
     },
     {
@@ -171,7 +176,7 @@ export function render(el, params) {
         (r) => `<li class="receipt-card card"><div class="card-body py-2 px-3">
           <div class="d-flex justify-content-between align-items-start gap-2">
             <div style="min-width:0">
-              ${r.merchant_name ? `<div class="fw-semibold text-truncate">${esc(r.merchant_name)}</div>` : '<div class="text-muted fst-italic">Chưa có tên</div>'}
+              <div class="text-truncate">${merchantLink(r)}</div>
               <div class="text-muted small">${formatDate(r.receipt_date ?? r.created_at)} · ${r.payer_id ? esc(state.members.get(r.payer_id) ?? "") : "Chưa chọn người trả"}</div>
               ${ocrHint(r)}
             </div>

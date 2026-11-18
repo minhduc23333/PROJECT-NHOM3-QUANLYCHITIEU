@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, File, Response, UploadFile, status
+from fastapi.responses import FileResponse
 
 from app.core.deps import DB, CurrentUser
 from app.core.errors import COMMON_ERRORS, ErrorResponse
@@ -61,6 +62,17 @@ async def upload_personal_receipt(db: DB, user: CurrentUser, file: Annotated[Upl
 @router.get("/receipts/{receipt_id}", response_model=ReceiptDetail, summary="Xem hóa đơn + các dòng món (bản nháp)")
 def get_receipt(receipt_id: int, db: DB, user: CurrentUser):
     return service.get_receipt(db, user, receipt_id)
+
+
+@router.get(
+    "/receipts/{receipt_id}/image",
+    response_class=FileResponse,
+    summary="Ảnh gốc của hóa đơn (để đối chiếu khi kiểm tra kết quả OCR)",
+    responses={200: {"content": {"image/jpeg": {}, "image/png": {}}, "description": "Ảnh JPG/PNG"}},
+)
+def get_receipt_image(receipt_id: int, db: DB, user: CurrentUser):
+    path = service.get_receipt_image(db, user, receipt_id)
+    return FileResponse(path, headers={"Cache-Control": "private, max-age=3600"})
 
 
 @router.patch(
