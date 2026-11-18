@@ -104,7 +104,7 @@ _SUMMARY_KEYS = [
     ("subtotal", ("tam tinh", "tong tien hang", "cong tien hang", "subtotal", "sub total", "sub-total")),
     ("tax", ("vat", "gtgt", "thue", "tax")),
     ("service", ("phi dich vu", "phi phuc vu", "phi pv", "service charge", "service fee", "service")),
-    ("total", ("tong cong", "tong thanh toan", "tong tien", "tong so tien", "can thanh toan",
+    ("total", ("t.cong", "t cong", "tong cong", "tong thanh toan", "tong tien", "tong so tien", "can thanh toan",
                "phai thanh toan", "thanh toan", "grand total", "total", "tong")),
 ]
 _SKIP_KEYS = ("khach dua", "tien thua", "tien thi", "tra lai", "tien mat", "tienmat", "the ", "discount",
@@ -157,8 +157,37 @@ def find_merchant(lines: list[str]) -> str | None:
 
 
 _QTY_PREFIX = re.compile(r"^\s*(\d{1,2})\s*[xX*]\s+")
-_INDEX_PREFIX = re.compile(r"^\s*\d{1,2}[.)]\s+")
+_INDEX_PREFIX = re.compile(r"^\s*\d{1,2}[.)](?!\d)\s*")
 _QTY_SUFFIX = re.compile(r"\s+[xX*]?\s*(\d{1,2})\s*$")
+
+# "Coca 2 2500050000": OCR dính đơn giá + thành tiền thành một dãy số. SL (1-2 chữ số) đứng ngay trước dãy.
+_GLUED = re.compile(r"(?<![\w.,])(\d{1,2})(\s+)(\d{6,12})(?![\w.,])")
+
+
+def split_glued_numbers(text: str) -> tuple[str, bool]:
+    """Tách dãy số OCR dính liền thành (đơn giá, thành tiền).
+
+    Chỉ tách khi đúng DUY NHẤT một cách chia thỏa SL × đơn giá = thành tiền -> không đoán bừa.
+    Trả (text mới, có tách hay không).
+    """
+    changed = False
+
+    def fix(m: re.Match) -> str:
+        nonlocal changed
+        qty, digits = int(m.group(1)), m.group(3)
+        hits = []
+        for i in range(1, len(digits)):
+            a, b = digits[:i], digits[i:]
+            if a[0] == "0" or b[0] == "0":
+                continue
+            if int(b) >= MIN_LINE_TOTAL and qty * int(a) == int(b):
+                hits.append((a, b))
+        if len(hits) != 1:
+            return m.group(0)
+        changed = True
+        return f"{m.group(1)}{m.group(2)}{hits[0][0]} {hits[0][1]}"
+
+    return _GLUED.sub(fix, text), changed
 
 
 def _clean_name(name: str) -> str:
@@ -170,6 +199,7 @@ def _clean_name(name: str) -> str:
 def parse_item_line(line: str) -> tuple[ParsedItem | None, str | None]:
     """Một dòng món -> (ParsedItem, warning). Không phải dòng món -> (None, None)."""
     text = _INDEX_PREFIX.sub("", line)   # bỏ số thứ tự "1. " đầu dòng
+    text, was_split = split_glued_numbers(text)
     tokens = money_tokens(text)
     if not tokens:
         return None, None
@@ -218,6 +248,8 @@ def parse_item_line(line: str) -> tuple[ParsedItem | None, str | None]:
             warning = f"Dòng '{name}': không suy ra được đơn giá, cần kiểm tra"
     if line_total < MIN_LINE_TOTAL:
         return None, None
+    if was_split and warning is None:
+        warning = f"Dòng '{name}': OCR đọc dính số, đã tự tách ({qty} × {unit_price} = {line_total}), cần kiểm tra"
     return ParsedItem(name, qty, unit_price, line_total), warning
 
 

@@ -223,3 +223,23 @@ def test_tesseract_lang_falls_back_to_installed(monkeypatch):
     with pytest.raises(OcrError):
         engine._resolve_tess_lang(FakeTess)
     monkeypatch.setattr(engine, "_tess_langs", None)
+
+
+
+def test_index_without_space_and_t_cong_total():
+    r = parse_receipt([
+        "2)Sprite 2 25,000 50,000",
+        "4) Tonic 2 25,000 50,000",
+        "T.Cộng S 225,000",
+        "TIEN MAT 225,000",
+    ])
+    assert [i.item_name for i in r.items] == ["Sprite", "Tonic"]
+    assert r.total_amount == Decimal(225000)
+
+def test_glued_numbers_are_split_only_when_arithmetic_matches():
+    r = parse_receipt(["1)Coca 2 2500050000", "Tra 2 2500025000"])
+    assert len(r.items) == 1
+    item = r.items[0]
+    assert (item.item_name, item.quantity, item.unit_price, item.line_total) == (
+        "Coca", Decimal(2), Decimal(25000), Decimal(50000))
+    assert any("dính số" in w for w in r.warnings)

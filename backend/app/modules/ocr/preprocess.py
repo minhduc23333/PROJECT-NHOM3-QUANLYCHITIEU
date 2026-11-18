@@ -1,6 +1,6 @@
 """Tiền xử lý ảnh hóa đơn trước khi OCR (task T05E16E).
 
-Thứ tự: đọc ảnh -> xoay thẳng (EXIF + deskew) -> resize -> grayscale -> threshold.
+Thứ tự: đọc ảnh -> resize -> xoay thẳng (deskew) -> grayscale -> xóa bóng.
 Chỉ phụ thuộc OpenCV + NumPy, không đụng DB hay FastAPI để dễ test.
 """
 from __future__ import annotations
@@ -75,16 +75,24 @@ def deskew(gray: np.ndarray) -> np.ndarray:
 
 
 def threshold(gray: np.ndarray) -> np.ndarray:
-    """Adaptive threshold: chịu được ảnh chụp bị bóng/đèn không đều."""
+    """Adaptive threshold (không còn dùng mặc định, giữ lại để so sánh)."""
     blur = cv2.medianBlur(gray, 3)
     return cv2.adaptiveThreshold(
         blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 15
     )
 
 
+def remove_shadow(gray: np.ndarray) -> np.ndarray:
+    """Xóa bóng/ánh sáng không đều: chia ảnh cho ước lượng nền, giữ nguyên nét chữ."""
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (41, 41))
+    bg = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, k)
+    bg = cv2.medianBlur(bg, 21)
+    return cv2.divide(gray, bg, scale=255)
+
+
 def preprocess(img: np.ndarray, *, binarize: bool = True) -> np.ndarray:
-    """Pipeline đầy đủ. Trả ảnh xám (đã nhị phân hóa nếu binarize=True)."""
+    """Pipeline đầy đủ. Trả ảnh xám đã xóa bóng (binarize=True) hoặc ảnh xám gốc."""
     gray = to_gray(img)
     gray = resize_for_ocr(gray)
     gray = deskew(gray)
-    return threshold(gray) if binarize else gray
+    return remove_shadow(gray) if binarize else gray
