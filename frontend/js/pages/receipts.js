@@ -49,6 +49,16 @@ const CSS = `
 .rc-table .table-warning > td, .receipt-card.rc-new { background: #fdf3d8 !important; }
 .rc-summary { color: #6f687c; font-size: .875rem; }
 .rc-empty { background: #fff; border: 1px dashed #dcd3ea; border-radius: 14px; }
+.rc-inline-action {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border: 1px solid #e3d8f1;
+  border-radius: 999px; background: #faf7fd; color: #604b86 !important; font-weight: 600;
+  text-decoration: none !important; transition: background .18s ease, border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+.rc-inline-action svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.rc-inline-action:hover, .rc-inline-action:focus-visible {
+  background: #f0e8fa; border-color: #cbb8e4; box-shadow: 0 3px 10px rgba(96, 75, 134, .14); transform: translateY(-1px);
+}
+.rc-inline-action:focus-visible { outline: 2px solid #8a70b5; outline-offset: 2px; }
 `;
 function ensureStyles() {
   if (document.getElementById("receipts-css")) return;
@@ -60,6 +70,15 @@ function ensureStyles() {
 
 const ICON =
   '<svg viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9.5 8h5M9.5 12h5M9.5 16h3"/></svg>';
+const ACTION_ICONS = {
+  "Đọc ngay": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v17H6.5A2.5 2.5 0 0 1 4 17.5z"/><path d="M4 17.5A2.5 2.5 0 0 1 6.5 15H20M8 7h8M8 10h6"/></svg>',
+  "Nhập tay": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 16.5-.8 4.3 4.3-.8L20 7.5 16.5 4z"/><path d="m14.8 5.7 3.5 3.5"/></svg>',
+  "Kiểm tra & sửa": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5H5v16h14V5h-4M9 3h6v4H9z"/><path d="m8 13 2 2 5-5"/></svg>',
+  "Chia tiền →": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m16 14 4 4-4 4"/></svg>',
+  "Xem chia →": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m16 14 4 4-4 4"/></svg>',
+};
+const actionLink = (href, text, className = "") =>
+  `<a href="${href}" class="rc-inline-action ${className}">${ACTION_ICONS[text] ?? ""}<span>${text}</span></a>`;
 // Hóa đơn nháp: trạng thái đọc ảnh (OCR) + link mở trang tải ảnh để đọc tiếp / nhập tay (T05E175)
 const OCR = {
   PENDING: { text: "Chờ đọc ảnh", cls: "text-muted", action: "Đọc ngay" },
@@ -71,12 +90,12 @@ const ocrHint = (r) => {
   if (!o) return "";
   // Chờ đọc ảnh -> trang tải ảnh chạy OCR; còn lại -> trang Kiểm tra & xác nhận (T05E176)
   const href = (r.ocr_status ?? "PENDING") === "PENDING" ? `#/receipts/new?receipt=${r.id}` : `#/receipts/${r.id}`;
-  return `<span class="small d-block"><span class="${o.cls}">${o.text}${o.text ? " · " : ""}</span><a href="${href}" style="color:#7a62a3">${o.action}</a></span>`;
+  return `<span class="small d-block mt-1"><span class="${o.cls}">${o.text}${o.text ? " · " : ""}</span>${actionLink(href, o.action)}</span>`;
 };
 // Hóa đơn đã xác nhận / đã chốt: link sang trang Chia hóa đơn (T05E17B)
 const splitLink = (r) =>
   r.group_id && (r.status === "VERIFIED" || r.status === "SETTLED")
-    ? `<a href="#/receipts/${r.id}/split" class="small d-block mt-1" style="color:#7a62a3">${r.status === "VERIFIED" ? "Chia tiền →" : "Xem chia →"}</a>`
+    ? `${actionLink(`#/receipts/${r.id}/split`, r.status === "VERIFIED" ? "Chia tiền →" : "Xem chia →", "small mt-1")}`
     : "";
 // Tên cửa hàng bấm được để mở trang chi tiết / kiểm tra hóa đơn
 const merchantLink = (r) =>

@@ -13,6 +13,7 @@ from fastapi import HTTPException, UploadFile
 from app.core.config import settings
 from app.core.errors import BadRequest
 
+BACKEND_DIR = Path(__file__).resolve().parents[3]   # .../backend
 JPEG_MAGIC = b"\xff\xd8\xff"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 CHUNK = 64 * 1024
@@ -52,9 +53,21 @@ def validate_image(data: bytes) -> str:
     return extension
 
 
+def resolve_image_path(stored: str) -> Path:
+    """Đường dẫn ảnh đã lưu -> đường dẫn đọc được. Bản ghi cũ lưu đường dẫn tương đối ('uploads/x.jpg')
+    nên chạy uvicorn từ thư mục khác là mất ảnh (OCR báo hỏng im lặng); thử thêm gốc thư mục backend."""
+    path = Path(stored)
+    if path.is_absolute() or path.exists():
+        return path
+    return BACKEND_DIR / path
+
+
 def save_image(data: bytes, extension: str) -> Path:
-    """Ghi file vào UPLOAD_DIR; lỗi giữa chừng thì xóa file dở dang."""
+    """Ghi file vào UPLOAD_DIR (đường dẫn tương đối tính từ thư mục backend, không phụ thuộc nơi chạy
+    uvicorn); lỗi giữa chừng thì xóa file dở dang."""
     upload_dir = Path(settings.UPLOAD_DIR)
+    if not upload_dir.is_absolute():
+        upload_dir = BACKEND_DIR / upload_dir
     upload_dir.mkdir(parents=True, exist_ok=True)
     path = upload_dir / f"{uuid4().hex}{extension}"
     try:

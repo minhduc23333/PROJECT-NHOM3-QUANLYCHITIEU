@@ -290,7 +290,7 @@ export function render(el, params) {
           <div class="progress mt-3" role="progressbar" aria-label="Tiến độ" aria-valuemin="0" aria-valuemax="100">
             <div class="progress-bar" id="bar" style="width:0%"></div>
           </div>
-          <p class="text-muted small mt-2 mb-0">Có thể mất tới 30 giây. Vui lòng không đóng trang.</p>
+          <p class="text-muted small mt-2 mb-0">Có thể mất tới 1 phút với ảnh khó đọc. Vui lòng không đóng trang.</p>
         </div>
       </div>
     </div></div>`;
