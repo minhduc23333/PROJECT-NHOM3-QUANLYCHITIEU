@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     APP_ENV: str = "dev"  # dev | prod
     API_PREFIX: str = "/api"
 
-    DATABASE_URL: str = "mysql+pymysql://smartsplit:smartsplit@127.0.0.1:3307/smartsplit"
+    DATABASE_URL: str = "mysql+pymysql://smartsplit:smartsplit@127.0.0.1:3306/smartsplit"
     DB_ECHO: bool = False
     AUTO_MIGRATE: bool = True  # dev: tự chạy `alembic upgrade head` khi khởi động nếu DB (MySQL) còn trống
 
@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # OCR (module app/modules/ocr)
     OCR_ENGINE: str = "tesseract"        # tesseract | easyocr
     OCR_LANG: str = "vie+eng"            # chỉ dùng cho tesseract (cần tessdata 'vie')
-    OCR_TIMEOUT_SEC: float = 30.0
+    OCR_TIMEOUT_SEC: float = 60.0
     TESSERACT_CMD: str = ""              # vd Windows: D:/Tesseract-OCR/tesseract.exe
 
     CORS_ORIGINS: str = "http://localhost:8000"

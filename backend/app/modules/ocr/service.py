@@ -15,9 +15,11 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_group_membership
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.models import Receipt, ReceiptItem, User
-from app.modules.ocr.engine import OcrError, OcrResult, run_ocr
-from app.modules.ocr.parser import ParsedReceipt, parse_receipt
+from app.modules.ocr.engine import OcrError, OcrResult
+from app.modules.ocr.parser import ParsedReceipt
+from app.modules.ocr.pipeline import read_receipt
 from app.modules.ocr.preprocess import ImageError
+from app.modules.receipts.uploads import resolve_image_path
 
 log = logging.getLogger(__name__)
 
@@ -26,8 +28,8 @@ _MONEY_LIMIT = Decimal(9999999999999)  # Numeric(15,2): chừa chỗ cho 2 chữ
 
 def extract(image_path: str) -> tuple[ParsedReceipt, OcrResult]:
     """Ảnh -> (dữ liệu có cấu trúc, text thô). Ném OcrError/ImageError nếu OCR hỏng."""
-    raw = run_ocr(image_path)
-    return parse_receipt(raw.lines), raw
+    parsed, raw = read_receipt(str(resolve_image_path(image_path)))
+    return parsed, raw
 
 
 def _lock_still_draft(db: Session, receipt: Receipt) -> None:
@@ -39,7 +41,10 @@ def _lock_still_draft(db: Session, receipt: Receipt) -> None:
         raise Conflict("Hóa đơn đã được xác nhận/chốt trong lúc chạy OCR, kết quả OCR bị bỏ qua")
 
 
-def process_receipt(db: Session, user: User, receipt_id: int) -> tuple[Receipt, ParsedReceipt | None, str | None]:
+def process_receipt(
+    db: Session, user: User, receipt_id: int
+) -> tuple[Receipt, ParsedReceipt | None, str | None, str | None]:
+    """Trả (receipt, parsed, raw_text, error). OCR hỏng: parsed/raw_text = None và error = lý do cụ thể."""
     receipt = db.get(Receipt, receipt_id)
     if receipt is None:
         raise NotFound("Không tìm thấy hóa đơn")
@@ -60,7 +65,7 @@ def process_receipt(db: Session, user: User, receipt_id: int) -> tuple[Receipt, 
         receipt.ocr_status = "FAILED"
         db.commit()
         db.refresh(receipt)
-        return receipt, None, None
+        return receipt, None, None, str(exc)
 
     _lock_still_draft(db, receipt)
     receipt.ocr_status = parsed.ocr_status
@@ -85,4 +90,4 @@ def process_receipt(db: Session, user: User, receipt_id: int) -> tuple[Receipt, 
         )
     db.commit()
     db.refresh(receipt)
-    return receipt, parsed, raw.text
+    return receipt, parsed, raw.text, None

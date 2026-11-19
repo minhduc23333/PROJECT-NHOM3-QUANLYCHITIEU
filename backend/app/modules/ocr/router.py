@@ -15,12 +15,12 @@ router = APIRouter(prefix="/ocr", tags=["ocr"], responses=COMMON_ERRORS)
 )
 def run_receipt_ocr(receipt_id: int, db: DB, user: CurrentUser):
     """OCR thất bại vẫn trả 200 với `receipt.ocr_status = "FAILED"` để UI chuyển sang nhập tay."""
-    receipt, parsed, raw_text = service.process_receipt(db, user, receipt_id)
+    receipt, parsed, raw_text, error = service.process_receipt(db, user, receipt_id)
     items = [OcrItemOut.model_validate(i, from_attributes=True) for i in parsed.items] if parsed else []
     return OcrProcessOut(
         receipt=receipt,
         items=items,
         missing=parsed.missing if parsed else ["merchant_name", "receipt_date", "items", "subtotal", "total_amount"],
-        warnings=parsed.warnings if parsed else ["OCR thất bại, vui lòng nhập tay"],
+        warnings=parsed.warnings if parsed else [f"OCR thất bại: {error}" if error else "OCR thất bại, vui lòng nhập tay"],
         raw_text=raw_text,
     )

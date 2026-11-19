@@ -118,7 +118,7 @@ def get_receipt_image(db: Session, user: User, receipt_id: int) -> Path:
     """Đường dẫn ảnh gốc của hóa đơn (T05E176: xem ảnh cạnh biểu mẫu kiểm tra).
     Cùng quyền với xem hóa đơn: thành viên nhóm, hoặc chủ hóa đơn cá nhân."""
     receipt, _ = _load(db, user, receipt_id)
-    path = Path(receipt.image_path) if receipt.image_path else None
+    path = uploads.resolve_image_path(receipt.image_path) if receipt.image_path else None
     if path is None or not path.is_file():
         raise NotFound("Không tìm thấy ảnh hóa đơn")
     return path

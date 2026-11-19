@@ -55,8 +55,8 @@ const CSS = `
 .notice-ok { background:#effaf4; border:1px solid #c6e9d6; color:#24543d; }
 .mx-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:14px; background:#fff; }
 .mx { border-collapse:separate; border-spacing:0; width:100%; min-width:560px; font-size:.92rem; }
-.mx th, .mx td { padding:10px 12px; border-bottom:1px solid #f1ecf8; white-space:nowrap; }
-.mx thead th { background:#faf8fd; font-weight:600; color:var(--muted); vertical-align:bottom; }
+.mx th, .mx td { padding:10px 12px; border-bottom:1px solid #f1ecf8; white-space:nowrap; vertical-align:middle; }
+.mx thead th { background:#faf8fd; font-weight:600; color:var(--muted); }
 .mx .c-item { position:sticky; left:0; background:#fff; z-index:1; min-width:180px; white-space:normal; }
 .mx thead .c-item { background:#faf8fd; }
 .mx .c-mem { text-align:center; min-width:96px; }
@@ -83,6 +83,7 @@ const CSS = `
 .reasons li { margin:2px 0; }
 .result-list { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
 .result-list li { display:flex; justify-content:space-between; gap:12px; padding:10px 12px; border:1px solid var(--line); border-radius:12px; background:#fff; }
+.mx-section-title { margin:0 0 8px; font-size:1rem; font-weight:700; color:var(--ink); }
 /* Điện thoại: mỗi món một thẻ (bảng nhiều cột vẫn xem được bằng cách cuộn ngang) */
 .m-list { display:none; }
 @media (max-width: 575.98px) {
@@ -148,6 +149,7 @@ export function render(el, params) {
     const roleOf = new Map((st.group?.members ?? []).map((m) => [m.user_id, m.role]));
     const reasons = blockers({ status: r.status, payerId: r.payer_id, memberIds, items, selectorsByItem, subtotal: r.subtotal, total: r.total_amount, fee });
     const sumShares = members.reduce((t, m) => t + num(m.total), 0);
+    const itemsSum = items.reduce((t, item) => t + num(item.line_total), 0);
     const statusInfo = STATUS[r.status] ?? { text: r.status, cls: "" };
     // Sau khi chốt: số tiền thật lấy từ công nợ (người ứng tiền nhận phần lẻ làm tròn = tổng - phần người khác)
     const finalOf = new Map();
@@ -224,15 +226,13 @@ export function render(el, params) {
       ${notice}
       ${errorBox}
 
-      <div class="mx-wrap mb-3">
-        <table class="mx">
+      <div class="mx-wrap mx-items-wrap mb-3">
+        <table class="mx mx-items">
           <thead><tr>
             <th class="c-item" scope="col">Món</th>
             <th class="c-num" scope="col">SL</th>
             <th class="c-num" scope="col">Đơn giá</th>
             <th class="c-num" scope="col">Thành tiền</th>
-            ${cols.map(memHead).join("")}
-            <th class="c-num" scope="col">Số người</th>
           </tr></thead>
           <tbody>${items
             .map((i) => {
@@ -242,15 +242,37 @@ export function render(el, params) {
                 <td class="c-num">${formatNumber(i.quantity)}</td>
                 <td class="c-num">${formatVND(i.unit_price)}</td>
                 <td class="c-num">${formatVND(i.line_total)}</td>
+              </tr>`;
+            })
+            .join("")}</tbody>
+          <tfoot><tr class="grand">
+            <td class="c-item" colspan="3">Tổng tiền món</td><td class="c-num">${formatVND(itemsSum)}</td>
+          </tfoot>
+        </table>
+      </div>
+
+      <h3 class="mx-section-title">Chọn món theo thành viên</h3>
+      <div class="mx-wrap mx-select-wrap mb-3">
+        <table class="mx mx-select">
+          <thead><tr>
+            <th class="c-item" scope="col">Món</th>
+            ${cols.map(memHead).join("")}
+            <th class="c-num" scope="col">Số người</th>
+          </tr></thead>
+          <tbody>${items
+            .map((i) => {
+              const free = freeIds.has(i.id);
+              return `<tr class="${free ? "free" : ""}">
+                <th class="c-item" scope="row">${esc(i.item_name)}${free ? '<span class="free-tag">Chưa ai chọn</span>' : ""}</th>
                 ${cols.map((m) => cell(i, m)).join("")}
                 <td class="c-num"><span class="cnt">${selectorsByItem.get(i.id).length}</span></td>
               </tr>`;
             })
             .join("")}</tbody>
           <tfoot>
-            <tr><td class="c-item" colspan="4">Tiền món</td>${cols.map((m) => `<td class="c-mem ${m.user_id === meId ? "me" : ""}">${formatVND(m.item_amount)}</td>`).join("")}<td></td></tr>
-            <tr><td class="c-item" colspan="4">Thuế + phí (chia theo tỉ lệ)</td>${cols.map((m) => `<td class="c-mem ${m.user_id === meId ? "me" : ""}">${formatVND(m.fee_amount)}</td>`).join("")}<td></td></tr>
-            <tr class="grand"><td class="c-item" colspan="4">${settled ? "Số tiền mỗi người (đã chốt)" : "Tạm tính mỗi người"}</td>${cols.map((m) => `<td class="c-mem ${m.user_id === meId ? "me" : ""}">${formatVND(shareOf(m))}</td>`).join("")}<td class="c-num">${formatVND(sumShown)}</td></tr>
+            <tr><td class="c-item">Tiền món</td>${cols.map((m) => `<td class="c-mem ${m.user_id === meId ? "me" : ""}">${formatVND(m.item_amount)}</td>`).join("")}<td></td></tr>
+            <tr><td class="c-item">Thuế + phí (chia theo tỉ lệ)</td>${cols.map((m) => `<td class="c-mem ${m.user_id === meId ? "me" : ""}">${formatVND(m.fee_amount)}</td>`).join("")}<td></td></tr>
+            <tr class="grand"><td class="c-item">${settled ? "Số tiền mỗi người (đã chốt)" : "Tạm tính mỗi người"}</td>${cols.map((m) => `<td class="c-mem ${m.user_id === meId ? "me" : ""}">${formatVND(shareOf(m))}</td>`).join("")}<td class="c-num">${formatVND(sumShown)}</td></tr>
           </tfoot>
         </table>
       </div>
@@ -287,6 +309,8 @@ export function render(el, params) {
     box.querySelectorAll("input[data-item]").forEach((cb) => {
       cb.onchange = async () => {
         const itemId = cb.dataset.item;
+        const scrollLeft = [...box.querySelectorAll(".mx-wrap")].map((wrap) => wrap.scrollLeft);
+        const scrollTop = window.scrollY;
         box.querySelectorAll(`input[data-item="${itemId}"]`).forEach((x) => (x.disabled = true, x.classList.add("busy")));
         try {
           st.summary = cb.checked
@@ -298,6 +322,14 @@ export function render(el, params) {
           if (e.status === 409) return load(); // vừa có người chốt -> tải lại
         }
         paint();
+        requestAnimationFrame(() => {
+          box.querySelectorAll(".mx-wrap").forEach((wrap, index) => (wrap.scrollLeft = scrollLeft[index] ?? 0));
+          window.scrollTo(0, scrollTop);
+          const target = window.matchMedia("(max-width: 575.98px)").matches
+            ? box.querySelector(`.m-list input[data-item="${itemId}"]`)
+            : box.querySelector(`.mx-select input[data-item="${itemId}"]`);
+          target?.focus({ preventScroll: true });
+        });
       };
     });
     box.querySelector("#btn-reload").onclick = () => {
