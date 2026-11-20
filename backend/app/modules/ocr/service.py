@@ -19,6 +19,7 @@ from app.modules.ocr.engine import OcrError, OcrResult
 from app.modules.ocr.parser import ParsedReceipt
 from app.modules.ocr.pipeline import read_receipt
 from app.modules.ocr.preprocess import ImageError
+from app.modules.receipts import categories
 from app.modules.receipts.uploads import resolve_image_path
 
 log = logging.getLogger(__name__)
@@ -72,6 +73,8 @@ def process_receipt(
     if parsed.ocr_status == "DONE":
         receipt.merchant_name = parsed.merchant_name
         receipt.receipt_date = parsed.receipt_date
+        if not receipt.category:  # gợi ý theo từ khóa, không bao giờ đè danh mục người dùng đã chọn
+            receipt.category = categories.suggest(parsed.merchant_name, [i.item_name for i in parsed.items])
         for attr in ("subtotal", "tax_amount", "service_fee", "total_amount"):
             value = getattr(parsed, attr)
             if value is not None and value >= _MONEY_LIMIT:

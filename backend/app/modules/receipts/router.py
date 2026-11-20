@@ -1,12 +1,13 @@
 from typing import Annotated
 
-from fastapi import APIRouter, File, Response, UploadFile, status
+from fastapi import APIRouter, File, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse
 
 from app.core.deps import DB, CurrentUser
 from app.core.errors import COMMON_ERRORS, ErrorResponse
-from app.modules.receipts import service, uploads
+from app.modules.receipts import categories, service, uploads
 from app.modules.receipts.schemas import (
+    CategorySuggestion,
     ItemCreate,
     ItemOut,
     ItemUpdate,
@@ -57,6 +58,16 @@ async def upload_receipt(group_id: int, db: DB, user: CurrentUser, file: Annotat
 async def upload_personal_receipt(db: DB, user: CurrentUser, file: Annotated[UploadFile, File()]):
     image = await uploads.read_limited(file)
     return service.create_personal_receipt(db, user, image)
+
+
+@router.get(
+    "/receipts/category-suggestion",
+    response_model=CategorySuggestion,
+    summary="Gợi ý danh mục theo tên cửa hàng (quy tắc từ khóa)",
+    description="Không khớp từ khóa nào → `Khác`. Phải khai báo trước `/receipts/{receipt_id}` để không bị nhầm là id.",
+)
+def category_suggestion(user: CurrentUser, merchant_name: Annotated[str, Query(max_length=255)] = ""):
+    return CategorySuggestion(category=categories.suggest(merchant_name))
 
 
 @router.get("/receipts/{receipt_id}", response_model=ReceiptDetail, summary="Xem hóa đơn + các dòng món (bản nháp)")
