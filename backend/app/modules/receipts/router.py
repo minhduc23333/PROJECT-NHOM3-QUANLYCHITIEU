@@ -85,6 +85,16 @@ def update_receipt(receipt_id: int, data: ReceiptUpdate, db: DB, user: CurrentUs
     return service.update_receipt(db, user, receipt_id, data)
 
 
+@router.delete(
+    "/receipts/{receipt_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Xóa hóa đơn và dữ liệu chia tiền liên quan",
+)
+def delete_receipt(receipt_id: int, db: DB, user: CurrentUser):
+    service.delete_receipt(db, user, receipt_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post(
     "/receipts/{receipt_id}/items",
     response_model=ItemOut,

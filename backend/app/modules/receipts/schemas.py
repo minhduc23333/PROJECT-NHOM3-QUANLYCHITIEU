@@ -19,6 +19,7 @@ class ReceiptOut(BaseModel):
     status: str
     ocr_status: str | None = None
     created_at: datetime | None = None
+    can_delete: bool = False
 
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
