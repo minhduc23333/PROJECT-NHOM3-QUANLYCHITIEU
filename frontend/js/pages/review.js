@@ -449,7 +449,7 @@ export function render(el, params) {
     /* ----- Đọc ảnh tự động (khi còn PENDING) ----- */
     box.querySelector("#btn-ocr")?.addEventListener("click", async (e) => {
       try {
-        const res = await withBusy(e.currentTarget, () => post(`/ocr/receipts/${d.id}`));
+        const res = await withBusy(e.currentTarget, () => post(`/ocr/receipts/${d.id}`, undefined, { timeoutMs: 35000 }));
         if (res?.receipt?.ocr_status === "FAILED")
           toast.error(new Error(res.warnings?.[0] ?? "Vẫn không đọc được ảnh, hãy nhập tay"));
         else toast.info(res?.warnings?.length ? `Đã đọc ảnh. Lưu ý: ${res.warnings[0]}` : "Đã đọc ảnh, kiểm tra lại kết quả");

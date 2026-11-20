@@ -144,7 +144,7 @@ const ICON_UPLOAD = '<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><p
 
 export function render(el, params) {
   ensureStyles();
-  const state = { groupId: params.group ?? "", file: null, info: null, receipt: null, ocr: null, timer: null };
+  const state = { groupId: params.group ?? "", file: null, info: null, receipt: null, ocr: null, timer: null, abort: null, left: false };
 
   el.innerHTML = `<div class="page-upload">
     <a href="#/receipts" class="d-inline-block mb-2" style="color:#7a62a3;text-decoration:none">‹ Danh sách hóa đơn</a>
@@ -171,9 +171,15 @@ export function render(el, params) {
       else li.removeAttribute("aria-current");
     });
 
-  // Rời trang khi đang đếm giây thì dừng bộ đếm
+  // Rời trang khi đang đếm giây thì dừng bộ đếm và hủy yêu cầu OCR đang treo
   const stopTimer = () => state.timer && clearInterval(state.timer);
-  window.addEventListener("hashchange", stopTimer, { once: true });
+  const cleanup = () => {
+    state.left = true;
+    stopTimer();
+    state.abort?.abort();
+    state.abort = null;
+  };
+  window.addEventListener("hashchange", cleanup, { once: true });
 
   /* ---------- Bước 1: chọn nhóm + ảnh ---------- */
   async function stepPick() {
@@ -290,7 +296,10 @@ export function render(el, params) {
           <div class="progress mt-3" role="progressbar" aria-label="Tiến độ" aria-valuemin="0" aria-valuemax="100">
             <div class="progress-bar" id="bar" style="width:0%"></div>
           </div>
-          <p class="text-muted small mt-2 mb-0">Có thể mất tới 1 phút với ảnh khó đọc. Vui lòng không đóng trang.</p>
+          <p class="text-muted small mt-2 mb-0" id="ocr-note">Thường mất 5–20 giây. Nếu quá lâu hệ thống tự dừng để bạn nhập tay.</p>
+          <div class="mt-3 d-none" id="ocr-skip-wrap">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-skip-ocr">Bỏ qua &amp; nhập tay ngay</button>
+          </div>
         </div>
       </div>
     </div></div>`;
@@ -330,23 +339,32 @@ export function render(el, params) {
     const sec = stage.querySelector("#ocr-sec");
     title.textContent = "Đang đọc hóa đơn...";
     mark("p-ocr", "active");
+    const skipWrap = stage.querySelector("#ocr-skip-wrap");
+    const skipBtn = stage.querySelector("#btn-skip-ocr");
+    const ctrl = new AbortController();
+    state.abort = ctrl;
+    if (skipBtn) skipBtn.onclick = () => ctrl.abort();
     const started = Date.now();
     stopTimer();
     state.timer = setInterval(() => {
       const s = Math.floor((Date.now() - started) / 1000);
       sec.textContent = `· ${s} giây`;
-      bar.style.width = `${Math.min(30 + s * 2.2, 92)}%`; // ước lượng, tối đa 92% cho tới khi xong
+      bar.style.width = `${Math.min(30 + s * 3.0, 92)}%`; // ước lượng, tối đa 92% cho tới khi xong
       if (s >= 4) mark("p-parse", "active");
+      if (s >= 8 && skipWrap) skipWrap.classList.remove("d-none");
     }, 500);
     try {
-      state.ocr = await post(`/ocr/receipts/${state.receipt.id}`);
+      state.ocr = await post(`/ocr/receipts/${state.receipt.id}`, undefined, { timeoutMs: 35000, signal: ctrl.signal });
       state.receipt = state.ocr.receipt;
     } catch (e) {
-      // Không chạy được OCR (lỗi server, mạng...) -> vẫn cho nhập tay
+      // Không chạy được OCR / quá hạn 30s / người dùng bấm bỏ qua -> vẫn chuyển sang nhập tay
+      if (e?.code === "TIMEOUT") toast.error("Đọc hóa đơn quá lâu (>35s), chuyển sang trang kiểm tra để nhập tay");
       state.ocr = { receipt: state.receipt, items: [], missing: Object.keys(FIELD_LABEL), warnings: [e.message], error: true };
     } finally {
       stopTimer();
+      if (state.abort === ctrl) state.abort = null;
     }
+    if (state.left) return;
     bar.style.width = "100%";
     mark("p-ocr", "done");
     mark("p-parse", "done");

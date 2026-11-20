@@ -1,10 +1,15 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# .env nằm ở backend/ — dùng đường dẫn tuyệt đối để chạy uvicorn/pytest từ thư mục nào cũng đọc đúng
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
     """Đọc cấu hình từ biến môi trường / file backend/.env (xem .env.example)."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=str(ENV_FILE), env_file_encoding="utf-8", extra="ignore")
 
     APP_NAME: str = "SmartSplit AI API"
     APP_ENV: str = "dev"  # dev | prod
@@ -22,12 +27,15 @@ class Settings(BaseSettings):
     MAX_UPLOAD_MB: int = 5
 
     # OCR (module app/modules/ocr)
-    OCR_ENGINE: str = "tesseract"        # tesseract | easyocr
+    OCR_ENGINE: str = "auto"             # auto | tesseract | easyocr | gemini
     OCR_LANG: str = "vie+eng"            # chỉ dùng cho tesseract (cần tessdata 'vie')
     OCR_TIMEOUT_SEC: float = 60.0
     TESSERACT_CMD: str = ""              # vd Windows: D:/Tesseract-OCR/tesseract.exe
 
     CORS_ORIGINS: str = "http://localhost:8000"
+
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-3.8-flash"
 
     @property
     def cors_list(self) -> list[str]:
