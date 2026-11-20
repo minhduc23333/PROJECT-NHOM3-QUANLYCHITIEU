@@ -84,18 +84,70 @@ const CSS = `
 .result-list { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
 .result-list li { display:flex; justify-content:space-between; gap:12px; padding:10px 12px; border:1px solid var(--line); border-radius:12px; background:#fff; }
 .mx-section-title { margin:0 0 8px; font-size:1rem; font-weight:700; color:var(--ink); }
-/* Điện thoại: mỗi món một thẻ (bảng nhiều cột vẫn xem được bằng cách cuộn ngang) */
-.m-list { display:none; }
+/* Chọn món theo thành viên: mỗi món một dòng, mỗi thành viên một "viên" (pill) */
+.pk-legend { display:flex; flex-wrap:wrap; gap:12px; font-size:.8rem; color:var(--muted); align-items:center; }
+.pk-legend .pill.demo { padding:1px 8px; font-size:.72rem; cursor:default; }
+.pick-list { display:grid; gap:10px; }
+.pick-row { display:grid; grid-template-columns: minmax(160px, 1.1fr) minmax(0, 2fr) 120px; gap:12px 16px; align-items:center;
+  padding:12px 16px; border:1px solid var(--line); border-radius:14px; background:#fff; transition: box-shadow .15s; }
+.pick-row:hover { box-shadow:0 8px 20px -16px rgba(122,98,163,.6); }
+.pick-row.free { background:#fffaf0; border-color:#f5dcae; box-shadow: inset 4px 0 0 #f0b04a; }
+.pick-name { font-weight:700; }
+.pick-sub { font-size:.82rem; color:var(--muted); margin-top:2px; }
+.pick-sub b { color:var(--ink); font-weight:600; }
+.pick-members { display:flex; flex-wrap:wrap; gap:8px; }
+.pick-split { text-align:right; font-size:.82rem; color:var(--muted); line-height:1.3; }
+.pick-split b { color:var(--ink); font-size:1rem; }
+.pick-split span { display:block; }
+.pill { position:relative; display:inline-flex; align-items:center; gap:6px; padding:4px 12px 4px 4px; border-radius:999px;
+  border:1.5px dashed #ddd3ea; background:#fff; color:#8a8296; font-size:.85rem; user-select:none; }
+.pill .p-ava { width:24px; height:24px; border-radius:50%; display:grid; place-items:center; font-size:.68rem; font-weight:700; background:#f3eff8; color:#a39bb0; }
+.pill.on { border-style:solid; border-color:#cdbbe6; background:#f4eefc; color:var(--ink); font-weight:600; }
+.pill.on .p-ava { background:#b6a1d4; color:#fff; font-size:.8rem; }
+.pill.me { cursor:pointer; border-color:#e3b8cb; }
+.pill.me:hover { background:#fdf4f8; }
+.pill.me.on { background:var(--grad); border-color:transparent; color:var(--ink); box-shadow:0 6px 14px -10px rgba(182,161,212,.9); }
+.pill.me.on .p-ava { background:#fff; color:#7a62a3; }
+.pill-input { position:absolute; opacity:0; width:1px; height:1px; pointer-events:none; }
+.pill.me:focus-within { outline:3px solid rgba(182,161,212,.45); outline-offset:2px; }
+.pill.busy, .pill:has(.busy) { opacity:.5; }
+.pk-toolbar { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; justify-content:space-between; }
+.pk-seg { display:inline-flex; flex-wrap:wrap; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:#fff; }
+.pk-seg button { border:0; background:transparent; padding:5px 12px; font-size:.84rem; color:var(--ink); }
+.pk-seg button[aria-pressed="true"] { background:var(--grad); font-weight:600; }
+.pk-switch { display:inline-flex; align-items:center; gap:6px; font-size:.85rem; color:var(--muted); cursor:pointer; }
+.pk-switch input { width:18px; height:18px; accent-color:#a993cb; }
+.pill.more { border-style:solid; border-color:var(--line); background:var(--mist); color:var(--brand-dark); font-weight:600; padding:4px 12px; cursor:pointer; }
+.pill.more:hover { background:#e9ddf7; }
+.share-list { display:grid; gap:8px; }
+.sl-row { display:grid; grid-template-columns: 34px minmax(140px, 220px) 1fr auto; gap:12px; align-items:center;
+  padding:10px 14px; border:1px solid var(--line); border-radius:12px; background:#fff; }
+.sl-row.me { background:linear-gradient(100deg,#fbf6ff 0%,#fff 70%); border-color:#d9c9ef; }
+.sl-name { min-width:0; }
+.sl-detail { font-size:.75rem; color:var(--muted); margin-top:4px; }
+.sl-total { font-weight:800; font-size:1.05rem; white-space:nowrap; }
+.share-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap:12px; }
+.share-card { border:1px solid var(--line); border-radius:16px; background:#fff; padding:14px 16px; }
+.share-card.me { background:linear-gradient(160deg,#fbf6ff 0%,#fff 70%); border-color:#d9c9ef; }
+.share-total { font-size:1.4rem; font-weight:800; letter-spacing:-.02em; }
+.share-bar { height:6px; border-radius:999px; background:#efeaf6; overflow:hidden; margin:6px 0 10px; }
+.share-bar i { display:block; height:100%; background:linear-gradient(90deg,#f0b0c3,#b6a1d4); }
+.share-rows { display:flex; justify-content:space-between; font-size:.82rem; color:var(--muted); padding:2px 0; }
+.share-rows span:last-child { color:var(--ink); }
+.share-sum { text-align:right; font-size:.85rem; color:var(--muted); }
+@media (max-width: 767.98px) {
+  .pick-row { grid-template-columns: 1fr auto; }
+  .pick-members { grid-column: 1 / -1; order:3; }
+  .pick-split { grid-column:2; grid-row:1; }
+}
 @media (max-width: 575.98px) {
-  .mx-wrap { display:none; }
-  .m-list { display:grid; gap:10px; }
-  .m-item { border:1px solid var(--line); border-radius:14px; padding:12px; background:#fff; }
-  .m-item.free { background:#fff6e5; border-color:#f5dcae; box-shadow: inset 4px 0 0 #f0b04a; }
-  .m-chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
-  .m-chip { padding:2px 8px; border-radius:999px; background:var(--mist); font-size:.75rem; }
-  .m-chip.me { background:#e5d9f7; font-weight:700; }
-  .m-toggle { display:flex; align-items:center; gap:8px; margin-top:8px; font-weight:600; }
-  .m-toggle input { width:22px; height:22px; accent-color:#a993cb; }
+  .mx-items-wrap { display:none; }
+  .pill { font-size:.82rem; }
+  .share-grid { grid-template-columns: 1fr 1fr; }
+  .sl-row { grid-template-columns: 34px 1fr auto; }
+  .sl-bar { grid-column: 1 / -1; grid-row: 2; }
+  .sl-total { grid-column: 3; grid-row: 1; }
+  .share-total { font-size:1.15rem; }
 }
 `;
 function ensureStyles() {
@@ -113,6 +165,9 @@ export function render(el, params) {
   el.innerHTML = `<div class="page-split"><div id="sp"><div class="text-muted p-3">Đang tải...</div></div></div>`;
   const box = el.querySelector("#sp");
   const st = { receipt: null, summary: null, group: null, error: null, result: null, debts: null };
+  // Trạng thái hiển thị (không gửi lên server): lọc món, mở rộng dòng, kiểu xem phần tiền
+  const ui = { filter: "all", showAll: false, expanded: new Set(), shareView: null };
+  const MANY = 6; // từ 7 thành viên trở lên: gọn lại, ẩn bớt người chưa chọn
 
   async function load() {
     try {
@@ -165,21 +220,14 @@ export function render(el, params) {
     const cols = [...members].sort(
       (a, b) => (b.user_id === meId) - (a.user_id === meId) || (b.user_id === r.payer_id) - (a.user_id === r.payer_id) || a.full_name.localeCompare(b.full_name, "vi"),
     );
-    const memHead = (m) => {
-      const tags = [m.user_id === meId ? "Tôi" : "", m.user_id === r.payer_id ? "Ứng tiền" : "", roleOf.get(m.user_id) === "LEADER" ? "Trưởng nhóm" : ""].filter(Boolean);
-      return `<th class="c-mem ${m.user_id === meId ? "me" : ""}" scope="col">
-        <div class="mem-head"><span class="mem-ava" aria-hidden="true">${esc(initials(m.full_name))}</span>
-        <span>${esc(m.full_name)}</span>${tags.length ? `<span class="mem-tag">${tags.join(" · ")}</span>` : ""}</div></th>`;
-    };
-    const cell = (item, m) => {
-      const on = m.selected_item_ids.includes(item.id);
-      const mine = m.user_id === meId;
-      const label = `${m.full_name} ${on ? "đã chọn" : "chưa chọn"} ${item.item_name}`;
-      // Cột của tôi: checkbox bấm được. Cột người khác: chỉ hiển thị (✓ đã chọn / – chưa chọn)
-      if (mine && canSelect)
-        return `<td class="c-mem me"><input type="checkbox" ${on ? "checked" : ""} data-item="${item.id}" aria-label="${esc(label)}"></td>`;
-      return `<td class="c-mem ${mine ? "me" : ""}"><span class="tick ${on ? "on" : ""}" role="img" aria-label="${esc(label)}">${on ? "✓" : "–"}</span></td>`;
-    };
+    const many = cols.length > MANY;
+    const shareView = ui.shareView ?? (many ? "list" : "cards");
+    const shownItems = items.filter((i) =>
+      ui.filter === "mine" ? selectorsByItem.get(i.id).some((m) => m.user_id === meId) : ui.filter === "free" ? freeIds.has(i.id) : true,
+    );
+    // Phần tiền: tôi đứng đầu, sau đó ai nhiều tiền hơn đứng trước
+    const shareOrder = [...cols].sort((a, b) => (b.user_id === meId) - (a.user_id === meId) || shareOf(b) - shareOf(a));
+    const maxShare = Math.max(1, ...cols.map((m) => shareOf(m)));
 
     let notice = "";
     if (settled)
@@ -187,7 +235,7 @@ export function render(el, params) {
     else if (r.status === "DRAFT")
       notice = `<div class="notice notice-warn mb-3"><span>⚠</span><div>Hóa đơn đang là <b>Nháp</b>. Mọi người vẫn tick món được, nhưng phải <a href="#/receipts/${r.id}">kiểm tra & xác nhận</a> trước khi chốt.</div></div>`;
     else
-      notice = `<div class="notice notice-info mb-3"><span>ℹ</span><div>Mỗi người tự tick <b>các món mình đã dùng</b> ở cột của mình. Nhiều người cùng tick một món thì món đó được <b>chia đều</b>. Thuế và phí chia theo tỉ lệ tiền món.</div></div>`;
+      notice = `<div class="notice notice-info mb-3"><span>ℹ</span><div>Mỗi người bấm nút <b>Tôi</b> ở <b>các món mình đã dùng</b>. Nhiều người cùng tick một món thì món đó được <b>chia đều</b>. Thuế và phí chia theo tỉ lệ tiền món.</div></div>`;
 
     const errorBox = st.error
       ? `<div class="notice notice-fail mb-3" role="alert" id="sp-error"><span>✕</span><div><b>${esc(st.error.message)}</b>
@@ -251,47 +299,91 @@ export function render(el, params) {
         </table>
       </div>
 
-      <h3 class="mx-section-title">Chọn món theo thành viên</h3>
-      <div class="mx-wrap mx-select-wrap mb-3">
-        <table class="mx mx-select">
-          <thead><tr>
-            <th class="c-item" scope="col">Món</th>
-            ${cols.map(memHead).join("")}
-            <th class="c-num" scope="col">Số người</th>
-          </tr></thead>
-          <tbody>${items
-            .map((i) => {
-              const free = freeIds.has(i.id);
-              return `<tr class="${free ? "free" : ""}">
-                <th class="c-item" scope="row">${esc(i.item_name)}${free ? '<span class="free-tag">Chưa ai chọn</span>' : ""}</th>
-                ${cols.map((m) => cell(i, m)).join("")}
-                <td class="c-num"><span class="cnt">${selectorsByItem.get(i.id).length}</span></td>
-              </tr>`;
-            })
-            .join("")}</tbody>
-          <tfoot>
-            <tr><td class="c-item">Tiền món</td>${cols.map((m) => `<td class="c-mem ${m.user_id === meId ? "me" : ""}">${formatVND(m.item_amount)}</td>`).join("")}<td></td></tr>
-            <tr><td class="c-item">Thuế + phí (chia theo tỉ lệ)</td>${cols.map((m) => `<td class="c-mem ${m.user_id === meId ? "me" : ""}">${formatVND(m.fee_amount)}</td>`).join("")}<td></td></tr>
-            <tr class="grand"><td class="c-item">${settled ? "Số tiền mỗi người (đã chốt)" : "Tạm tính mỗi người"}</td>${cols.map((m) => `<td class="c-mem ${m.user_id === meId ? "me" : ""}">${formatVND(shareOf(m))}</td>`).join("")}<td class="c-num">${formatVND(sumShown)}</td></tr>
-          </tfoot>
-        </table>
+      <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-2">
+        <h3 class="mx-section-title mb-0">Chọn món theo thành viên</h3>
+        <div class="pk-legend">
+          ${canSelect ? '<span><span class="pill me on demo">✓ Tôi</span> bấm để chọn / bỏ</span>' : ""}
+          <span><span class="pill on demo">✓</span> đã chọn</span>
+          <span><span class="pill demo">–</span> chưa chọn</span>
+        </div>
       </div>
-
-      <div class="m-list mb-3">${items
+      <div class="pk-toolbar mb-2">
+        <div class="pk-seg" role="group" aria-label="Lọc món">
+          ${[["all", `Tất cả (${items.length})`], ["mine", `Tôi đã chọn (${items.filter((i) => selectorsByItem.get(i.id).some((m) => m.user_id === meId)).length})`], ["free", `Chưa ai chọn (${freeIds.size})`]]
+            .map(([k, t]) => `<button type="button" data-filter="${k}" aria-pressed="${ui.filter === k}">${t}</button>`).join("")}
+        </div>
+        ${many ? `<label class="pk-switch"><input type="checkbox" id="pk-showall" ${ui.showAll ? "checked" : ""}> Hiện cả người chưa chọn</label>` : ""}
+      </div>
+      <div class="pick-list mb-4">${shownItems.length ? "" : `<div class="text-muted text-center p-3 pick-row" style="display:block">${ui.filter === "free" ? "Món nào cũng đã có người chọn 🎉" : "Bạn chưa chọn món nào."}</div>`}${shownItems
         .map((i) => {
           const free = freeIds.has(i.id);
           const who = selectorsByItem.get(i.id);
-          const mine = who.some((m) => m.user_id === meId);
-          return `<div class="m-item ${free ? "free" : ""}">
-            <div class="d-flex justify-content-between gap-2"><b>${esc(i.item_name)}</b><b>${formatVND(i.line_total)}</b></div>
-            <div class="text-muted small">${formatNumber(i.quantity)} × ${formatVND(i.unit_price)}${free ? ' <span class="free-tag">Chưa ai chọn</span>' : ""}</div>
-            <div class="m-chips">${who.map((m) => `<span class="m-chip ${m.user_id === meId ? "me" : ""}">${esc(m.full_name)}</span>`).join("") || '<span class="text-muted small">Chưa có ai</span>'}</div>
-            ${canSelect ? `<label class="m-toggle"><input type="checkbox" ${mine ? "checked" : ""} data-item="${i.id}"> Tôi đã dùng món này</label>` : ""}
+          const each = who.length ? num(i.line_total) / who.length : 0;
+          const open = !many || ui.showAll || ui.expanded.has(i.id);
+          const hidden = open ? 0 : cols.filter((m) => m.user_id !== meId && !who.some((x) => x.user_id === m.user_id)).length;
+          const pills = cols
+            .map((m) => {
+              const on = who.some((x) => x.user_id === m.user_id);
+              const mine = m.user_id === meId;
+              if (!open && !on && !mine) return ""; // gọn: ẩn người chưa chọn (trừ nút của tôi)
+              const name = mine ? "Tôi" : m.full_name;
+              const ava = `<span class="p-ava" aria-hidden="true">${on ? "✓" : esc(initials(m.full_name))}</span>`;
+              if (mine && canSelect)
+                return `<label class="pill me ${on ? "on" : ""}" title="${on ? "Bỏ chọn" : "Chọn"} món này">
+                  <input type="checkbox" class="pill-input" data-item="${i.id}" ${on ? "checked" : ""} aria-label="Tôi đã dùng ${esc(i.item_name)}">${ava}<span>${esc(name)}</span></label>`;
+              return `<span class="pill ${mine ? "me" : ""} ${on ? "on" : ""}" title="${esc(m.full_name)} ${on ? "đã chọn" : "chưa chọn"}">${ava}<span>${esc(name)}</span></span>`;
+            })
+            .join("");
+          return `<div class="pick-row ${free ? "free" : ""}">
+            <div class="pick-item">
+              <div class="pick-name">${esc(i.item_name)}${free ? '<span class="free-tag">Chưa ai chọn</span>' : ""}</div>
+              <div class="pick-sub">${formatNumber(i.quantity)} × ${formatVND(i.unit_price)} = <b>${formatVND(i.line_total)}</b></div>
+            </div>
+            <div class="pick-members">${pills}${hidden ? `<button type="button" class="pill more" data-expand="${i.id}" title="Xem những người chưa chọn món này">+${hidden} chưa chọn</button>` : ""}${many && !ui.showAll && ui.expanded.has(i.id) ? `<button type="button" class="pill more" data-collapse="${i.id}">Thu gọn</button>` : ""}</div>
+            <div class="pick-split">${who.length ? `<b>${who.length}</b> người<span>${formatVND(Math.round(each))}/người</span>` : '<span class="text-warning-emphasis">Chưa chia</span>'}</div>
           </div>`;
         })
-        .join("")}
-        <div class="m-item"><b>Tạm tính mỗi người</b>${cols.map((m) => `<div class="d-flex justify-content-between mt-1"><span>${esc(m.full_name)}${m.user_id === meId ? " (tôi)" : ""}</span><b>${formatVND(m.total)}</b></div>`).join("")}</div>
+        .join("")}</div>
+
+      <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-2">
+        <h3 class="mx-section-title mb-0">${settled ? "Số tiền mỗi người (đã chốt)" : "Tạm tính mỗi người"}</h3>
+        <div class="pk-seg" role="group" aria-label="Kiểu xem">
+          <button type="button" data-share="list" aria-pressed="${shareView === "list"}">Danh sách</button>
+          <button type="button" data-share="cards" aria-pressed="${shareView === "cards"}">Thẻ</button>
+        </div>
       </div>
+      ${shareView === "list" ? `<div class="share-list mb-2">${shareOrder
+        .map((m) => {
+          const share = shareOf(m);
+          const pct = num(r.total_amount) ? (share / num(r.total_amount)) * 100 : 0;
+          const tags = [m.user_id === meId ? "Tôi" : "", m.user_id === r.payer_id ? "Ứng tiền" : "", roleOf.get(m.user_id) === "LEADER" ? "Trưởng nhóm" : ""].filter(Boolean);
+          return `<div class="sl-row ${m.user_id === meId ? "me" : ""}">
+            <span class="mem-ava" aria-hidden="true">${esc(initials(m.full_name))}</span>
+            <div class="sl-name"><div class="fw-semibold text-truncate">${esc(m.full_name)}</div>${tags.length ? `<div class="mem-tag">${tags.join(" · ")}</div>` : ""}</div>
+            <div class="sl-bar"><div class="share-bar m-0"><i style="width:${Math.min(100, (share / maxShare) * 100)}%"></i></div>
+              <div class="sl-detail">Món ${formatVND(m.item_amount)} · Thuế/phí ${formatVND(m.fee_amount)} · ${Math.round(pct)}%</div></div>
+            <div class="sl-total">${formatVND(share)}</div>
+          </div>`;
+        })
+        .join("")}</div>` : `<div class="share-grid mb-2">${shareOrder
+        .map((m) => {
+          const share = shareOf(m);
+          const pct = num(r.total_amount) ? Math.round((share / num(r.total_amount)) * 100) : 0;
+          const tags = [m.user_id === meId ? "Tôi" : "", m.user_id === r.payer_id ? "Ứng tiền" : "", roleOf.get(m.user_id) === "LEADER" ? "Trưởng nhóm" : ""].filter(Boolean);
+          return `<div class="share-card ${m.user_id === meId ? "me" : ""}">
+            <div class="d-flex align-items-center gap-2 mb-2">
+              <span class="mem-ava" aria-hidden="true">${esc(initials(m.full_name))}</span>
+              <div style="min-width:0"><div class="fw-semibold text-truncate">${esc(m.full_name)}</div>${tags.length ? `<div class="mem-tag">${tags.join(" · ")}</div>` : ""}</div>
+            </div>
+            <div class="share-total">${formatVND(share)}</div>
+            <div class="share-bar"><i style="width:${Math.min(100, pct)}%"></i></div>
+            <div class="share-rows"><span>Tiền món</span><span>${formatVND(m.item_amount)}</span></div>
+            <div class="share-rows"><span>Thuế + phí</span><span>${formatVND(m.fee_amount)}</span></div>
+            <div class="share-rows"><span>Tỉ lệ</span><span>${pct}%</span></div>
+          </div>`;
+        })
+        .join("")}</div>`}
+      <div class="share-sum mb-3">Tổng các phần: <b>${formatVND(sumShown)}</b> / hóa đơn ${formatVND(r.total_amount)}</div>
 
       ${settled ? "" : `<div class="card"><div class="card-body d-flex flex-wrap gap-3 align-items-center">
         <div class="flex-grow-1" style="min-width:240px">
@@ -325,13 +417,16 @@ export function render(el, params) {
         requestAnimationFrame(() => {
           box.querySelectorAll(".mx-wrap").forEach((wrap, index) => (wrap.scrollLeft = scrollLeft[index] ?? 0));
           window.scrollTo(0, scrollTop);
-          const target = window.matchMedia("(max-width: 575.98px)").matches
-            ? box.querySelector(`.m-list input[data-item="${itemId}"]`)
-            : box.querySelector(`.mx-select input[data-item="${itemId}"]`);
+          const target = box.querySelector(`.pick-list input[data-item="${itemId}"]`);
           target?.focus({ preventScroll: true });
         });
       };
     });
+    box.querySelectorAll("[data-filter]").forEach((b) => (b.onclick = () => ((ui.filter = b.dataset.filter), paint())));
+    box.querySelectorAll("[data-expand]").forEach((b) => (b.onclick = () => (ui.expanded.add(Number(b.dataset.expand)), paint())));
+    box.querySelectorAll("[data-collapse]").forEach((b) => (b.onclick = () => (ui.expanded.delete(Number(b.dataset.collapse)), paint())));
+    box.querySelectorAll("[data-share]").forEach((b) => (b.onclick = () => ((ui.shareView = b.dataset.share), paint())));
+    box.querySelector("#pk-showall")?.addEventListener("change", (e) => ((ui.showAll = e.target.checked), paint()));
     box.querySelector("#btn-reload").onclick = () => {
       st.error = null;
       load();
