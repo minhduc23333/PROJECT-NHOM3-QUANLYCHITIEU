@@ -6,7 +6,9 @@ import { getToken, getUser } from "../auth.js";
 import { formatDateTime, formatNumber, formatVND, parseVND } from "../format.js";
 import { confirmDialog, emptyHTML, esc, toast, withBusy } from "../ui.js";
 
-const CATEGORIES = ["Ăn uống", "Đi lại", "Mua sắm", "Nhà ở", "Giải trí", "Sức khỏe", "Khác"];
+// Phải khớp backend (app/modules/receipts/categories.py). Mặc định "Khác".
+const CATEGORIES = ["Ăn uống", "Di chuyển", "Mua sắm", "Khác"];
+const DEFAULT_CATEGORY = "Khác";
 const STATUS = {
   DRAFT: { text: "Nháp", cls: "rv-st-draft" },
   VERIFIED: { text: "Đã xác nhận", cls: "rv-st-verified" },
@@ -228,8 +230,9 @@ export function render(el, params) {
               <div class="col-6 col-md-3">
                 <label class="form-label" for="f-category">Danh mục</label>
                 <select class="form-select" id="f-category" name="category" ${dis(headerOn)}>
-                  ${catOptions.map((c) => `<option ${c === (d.category ?? "Ăn uống") ? "selected" : ""}>${esc(c)}</option>`).join("")}
+                  ${catOptions.map((c) => `<option ${c === (d.category ?? DEFAULT_CATEGORY) ? "selected" : ""}>${esc(c)}</option>`).join("")}
                 </select>
+                <div class="form-text" id="cat-hint"></div>
               </div>
             </div>
 
@@ -400,6 +403,29 @@ export function render(el, params) {
     });
     form.addEventListener("change", refresh);
     refresh();
+
+    /* ----- Gợi ý danh mục theo tên cửa hàng (T05E17F) ----- */
+    // Chỉ gợi ý khi người dùng chưa tự chọn và hóa đơn chưa có danh mục riêng; chọn tay luôn thắng.
+    const catSelect = form.elements.category;
+    const catHint = box.querySelector("#cat-hint");
+    let catTouched = false;
+    catSelect.addEventListener("change", () => {
+      catTouched = true;
+      if (catHint) catHint.textContent = "";
+    });
+    form.elements.merchant_name.addEventListener("change", async () => {
+      const name = form.elements.merchant_name.value.trim();
+      if (!headerOn || catTouched || !name || (d.category && d.category !== DEFAULT_CATEGORY)) return;
+      try {
+        const { category } = await get(`/receipts/category-suggestion?merchant_name=${encodeURIComponent(name)}`);
+        if (!CATEGORIES.includes(category) || category === DEFAULT_CATEGORY || catSelect.value === category) return;
+        catSelect.value = category;
+        if (catHint) catHint.textContent = `Gợi ý theo tên cửa hàng: ${category}. Bạn có thể đổi.`;
+        form.dispatchEvent(new Event("input")); // đánh dấu "Có thay đổi chưa lưu"
+      } catch {
+        /* gợi ý chỉ là tiện ích, lỗi thì bỏ qua */
+      }
+    });
 
     /* ----- Xóa hóa đơn ----- */
     box.querySelector("#btn-delete-receipt")?.addEventListener("click", async (e) => {

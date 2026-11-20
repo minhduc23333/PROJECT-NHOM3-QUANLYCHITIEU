@@ -2,7 +2,9 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+
+from app.modules.receipts import categories
 
 
 class ReceiptOut(BaseModel):
@@ -68,7 +70,19 @@ class ReceiptUpdate(BaseModel):
     tax_amount: Money | None = None
     service_fee: Money | None = None
     total_amount: Money | None = None
-    category: Annotated[str, StringConstraints(strip_whitespace=True, max_length=50)] | None = None
+    category: Annotated[str, StringConstraints(strip_whitespace=True, max_length=50)] | None = Field(
+        default=None,
+        description="Một trong: Ăn uống, Di chuyển, Mua sắm, Khác (bỏ qua hoa/thường và dấu). Để trống = Khác.",
+    )
+
+    @field_validator("category")
+    @classmethod
+    def _check_category(cls, v: str | None) -> str | None:
+        return None if v is None else categories.normalize(v)
+
+
+class CategorySuggestion(BaseModel):
+    category: str  # gợi ý theo quy tắc từ khóa; không khớp -> "Khác"
 
 
 class ReceiptDetail(ReceiptOut):
