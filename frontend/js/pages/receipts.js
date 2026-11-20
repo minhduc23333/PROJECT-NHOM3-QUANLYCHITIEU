@@ -2,9 +2,9 @@
 // - Chọn nhóm, danh sách hóa đơn của nhóm, badge trạng thái DRAFT / VERIFIED / SETTLED
 // - Nút "+ Thêm hóa đơn": mở trang tải ảnh & đọc hóa đơn (#/receipts/new, T05E175)
 // - Lọc cơ bản: theo trạng thái, tìm theo tên cửa hàng, sắp xếp
-import { get } from "../api.js";
+import { del, get } from "../api.js";
 import { formatDate, formatVND } from "../format.js";
-import { dataTable, emptyHTML, esc, renderState, selectField } from "../ui.js";
+import { confirmDialog, dataTable, emptyHTML, esc, renderState, selectField, toast, withBusy } from "../ui.js";
 
 
 export const STATUS = {
@@ -96,6 +96,14 @@ const ocrHint = (r) => {
 const splitLink = (r) =>
   r.group_id && (r.status === "VERIFIED" || r.status === "SETTLED")
     ? `${actionLink(`#/receipts/${r.id}/split`, r.status === "VERIFIED" ? "Chia tiền →" : "Xem chia →", "small mt-1")}`
+    : "";
+const deleteButton = (r) =>
+  r.can_delete
+    ? `<button type="button" class="btn btn-sm btn-link text-danger p-0 ms-1" data-delete="${r.id}" aria-label="Xóa hóa đơn" title="Xóa hóa đơn">
+         <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round">
+           <path d="M3 6h18M8 6V3h8v3m-9 0 1 15h8l1-15M10 10v7M14 10v7"/>
+         </svg>
+      </button>`
     : "";
 // Tên cửa hàng bấm được để mở trang chi tiết / kiểm tra hóa đơn
 const merchantLink = (r) =>
@@ -191,6 +199,7 @@ export function render(el, params) {
     },
     { key: "total_amount", title: "Tổng tiền", align: "end", render: (v) => formatVND(v) },
     { key: "status", title: "Trạng thái", render: (v, r) => statusBadge(v) + splitLink(r) },
+    { key: "id", title: "", align: "end", render: (v, r) => deleteButton(r) },
   ];
 
   // Điện thoại: mỗi hóa đơn một thẻ, dễ đọc hơn bảng nhiều cột
@@ -207,6 +216,7 @@ export function render(el, params) {
             <div class="text-end flex-shrink-0">
               <div class="fw-semibold">${formatVND(r.total_amount)}</div>
               ${statusBadge(r.status)}${splitLink(r)}
+              ${deleteButton(r)}
             </div>
           </div>
         </div></li>`,
@@ -278,6 +288,29 @@ export function render(el, params) {
       list.querySelectorAll(".receipt-card")[idx]?.classList.add("rc-new");
       state.highlight = null;
     }
+    list.querySelectorAll("[data-delete]").forEach((button) => {
+      button.onclick = async () => {
+        const id = Number(button.dataset.delete);
+        const receipt = state.rows.find((r) => r.id === id);
+        const ok = await confirmDialog({
+          title: "Xóa hóa đơn?",
+          message: `Hóa đơn “${receipt?.merchant_name || "Chưa có tên"}” và dữ liệu chia tiền liên quan sẽ bị xóa. Không thể hoàn tác.`,
+          okText: "Xóa",
+          cancelText: "Hủy",
+          danger: true,
+        });
+        if (!ok) return;
+        try {
+          await withBusy(button, () => del(`/receipts/${id}`));
+          state.rows = state.rows.filter((r) => r.id !== id);
+          toast.success("Đã xóa hóa đơn");
+          paintFilters();
+          paintTable();
+        } catch (e) {
+          toast.error(e);
+        }
+      };
+    });
   }
 
   const loadReceipts = () =>

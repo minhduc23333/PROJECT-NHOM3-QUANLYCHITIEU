@@ -197,3 +197,29 @@ def test_settle_permission_only_uploader_or_leader(client, monkeypatch, tmp_path
     assert client.post(f"{url}/verify", headers=leader, json={"payer_id": lid}).status_code == 200
     assert client.post(f"{url}/settle", headers=member).status_code == 403
     assert client.post(f"{url}/settle", headers=leader).status_code == 200
+
+
+def test_delete_receipt_permission_and_cleanup(client, monkeypatch, tmp_path):
+    from app.modules.receipts import service
+
+    monkeypatch.setattr(service.settings, "UPLOAD_DIR", str(tmp_path))
+    owner = register(client, "delete-owner@x.vn")
+    member = register(client, "delete-member@x.vn")
+    gid = client.post("/api/groups", json={"name": "Delete group"}, headers=owner).json()["id"]
+    assert client.post(
+        f"/api/groups/{gid}/members",
+        json={"email": "delete-member@x.vn"},
+        headers=owner,
+    ).status_code == 201
+
+    receipt = client.post(
+        f"/api/groups/{gid}/receipts",
+        headers=owner,
+        files={"file": ("receipt.jpg", b"\xff\xd8\xffvalid", "image/jpeg")},
+    ).json()
+    url = f"/api/receipts/{receipt['id']}"
+
+    assert client.delete(url, headers=member).status_code == 403
+    assert client.delete(url, headers=owner).status_code == 204
+    assert client.get(url, headers=owner).status_code == 404
+    assert list(tmp_path.iterdir()) == []
