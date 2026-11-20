@@ -190,6 +190,7 @@ export function render(el, params) {
           ${d.group_id && d.status !== "DRAFT" ? `<a class="btn btn-sm btn-primary" href="#/receipts/${d.id}/split">${d.status === "SETTLED" ? "Xem kết quả chia" : "Chia tiền →"}</a>` : ""}
           <span class="text-muted small ms-1">${esc(d.group_name ? `Nhóm: ${d.group_name}` : "Cá nhân")} · tải lên ${formatDateTime(d.created_at)}</span>
         </div>
+        ${d.can_delete ? '<button type="button" class="btn btn-sm btn-outline-danger" id="btn-delete-receipt">Xóa hóa đơn</button>' : ""}
         <a class="rv-close" href="${back}" aria-label="Thoát kiểm tra hóa đơn" title="Thoát">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
         </a>
@@ -399,6 +400,25 @@ export function render(el, params) {
     });
     form.addEventListener("change", refresh);
     refresh();
+
+    /* ----- Xóa hóa đơn ----- */
+    box.querySelector("#btn-delete-receipt")?.addEventListener("click", async (e) => {
+      const ok = await confirmDialog({
+        title: "Xóa hóa đơn?",
+        message: `Hóa đơn “${d.merchant_name || "Chưa có tên"}” và dữ liệu chia tiền liên quan sẽ bị xóa. Không thể hoàn tác.`,
+        okText: "Xóa",
+        cancelText: "Hủy",
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await withBusy(e.currentTarget, () => del(`/receipts/${d.id}`));
+        toast.success("Đã xóa hóa đơn");
+        window.location.hash = back;
+      } catch (err) {
+        toast.error(err);
+      }
+    });
 
     /* ----- Đọc ảnh tự động (khi còn PENDING) ----- */
     box.querySelector("#btn-ocr")?.addEventListener("click", async (e) => {
