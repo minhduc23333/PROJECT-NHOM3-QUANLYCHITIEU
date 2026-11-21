@@ -1,0 +1,19 @@
+fastapi
+uvicorn[standard]
+sqlalchemy>=2.0
+alembic
+pymysql
+cryptography
+pydantic-settings
+email-validator
+python-multipart
+bcrypt
+PyJWT
+httpx
+pytest
+ruff
+# OCR (task T05E16E): tiền xử lý ảnh + engine Tesseract
+opencv-python-headless
+numpy
+pytesseract
+# easyocr   # tùy chọn: bỏ comment nếu đặt OCR_ENGINE=easyocr (nặng, kéo theo torch)

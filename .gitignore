@@ -1,0 +1,10 @@
+__pycache__/
+.venv/
+.env
+backend/uploads/
+*.db
+.idea/
+.vscode/
+.pytest_cache/
+.ruff_cache/
+node_modules/
