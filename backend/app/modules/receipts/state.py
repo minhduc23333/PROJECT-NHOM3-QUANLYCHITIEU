@@ -26,7 +26,7 @@ ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
 }
 
 # Các trường đầu hóa đơn làm thay đổi kết quả chia tiền. merchant/ngày/category thì không.
-SPLIT_FIELDS = frozenset({"subtotal", "tax_amount", "service_fee", "total_amount"})
+SPLIT_FIELDS = frozenset({"subtotal", "tax_amount", "service_fee", "discount_amount", "total_amount"})
 
 ERR_SETTLED = "RECEIPT_SETTLED"
 ERR_BAD_TRANSITION = "INVALID_STATUS_TRANSITION"

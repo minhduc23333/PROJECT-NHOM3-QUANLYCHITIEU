@@ -2,10 +2,10 @@
 // Danh sách khoản nợ: người trả → người nhận, số tiền; tổng phải trả / được nhận;
 // phân biệt rõ vai trò (bạn phải trả / bạn được nhận / giữa thành viên khác); trạng thái dữ liệu trống.
 // Dữ liệu: GET /api/groups/{id}/debts (công nợ được tạo khi Trưởng nhóm chốt chia hóa đơn).
-import { get } from "../api.js";
+import { get, patch } from "../api.js";
 import { getUser } from "../auth.js";
 import { formatVND } from "../format.js";
-import { emptyHTML, esc, renderState, toast } from "../ui.js";
+import { confirmDialog, emptyHTML, esc, renderState, toast, withBusy } from "../ui.js";
 
 const num = (v) => Number(v ?? 0) || 0;
 const initials = (name = "") => {
@@ -177,13 +177,22 @@ export function render(el, params) {
   </div>`;
   const body = el.querySelector("#body");
 
-  const syncUrl = () => {
+  const syncUrl = (push = true) => {
     const qs = new URLSearchParams();
     if (state.groupId !== "all") qs.set("group", state.groupId);
     if (state.scope !== "mine") qs.set("scope", state.scope);
     if (state.status !== "OPEN") qs.set("status", state.status);
-    history.replaceState(null, "", `#/debts${qs.toString() ? `?${qs}` : ""}`);
+    const nextHash = `#/debts${qs.toString() ? `?${qs}` : ""}`;
+    if (location.hash !== nextHash) {
+      if (push) history.pushState(null, "", nextHash);
+      else history.replaceState(null, "", nextHash);
+    }
   };
+
+  const canConfirmPayment = (d) =>
+    d.status === "OPEN" &&
+    (d.creditor_id === meId ||
+      state.groups.some((g) => String(g.id) === String(d.group_id) && g.my_role === "LEADER"));
 
   const person = (id, name, label) => `<div class="party">
       <span class="ava ${id === meId ? "me" : ""}" aria-hidden="true">${esc(initials(name))}</span>
@@ -237,6 +246,7 @@ export function render(el, params) {
               <span>Hóa đơn: <a href="#/receipts/${d.receipt_id}/split">${esc(d.merchant_name || `#${d.receipt_id}`)}</a></span>
               ${d.status === "OPEN" && role === "receive" ? `<button type="button" class="copy-btn ms-auto" data-copy="${esc(remindText(d.debtor_name, d.amount, d.merchant_name))}" data-done="Đã sao chép lời nhắc">Nhắc nợ</button>` : ""}
               ${d.status === "OPEN" && role === "pay" ? `<button type="button" class="copy-btn ms-auto" data-copy="${esc(transferText(me?.full_name ?? "", d.amount, d.merchant_name))}" data-done="Đã sao chép nội dung chuyển khoản">Sao chép ND chuyển khoản</button>` : ""}
+              ${canConfirmPayment(d) ? `<button type="button" class="copy-btn ms-auto" data-pay="${d.id}">✓ Đã nhận tiền</button>` : ""}
             </div>
           </li>`;
       };
@@ -356,6 +366,26 @@ export function render(el, params) {
         toast.success(btn.dataset.done);
       };
     });
+    body.querySelectorAll("[data-pay]").forEach((button) => {
+      button.onclick = async () => {
+        const debtId = Number(button.dataset.pay);
+        const debt = state.debts.find((d) => d.id === debtId);
+        const ok = await confirmDialog({
+          title: "Xác nhận đã nhận tiền?",
+          message: `Xác nhận khoản ${formatVND(debt?.amount)} từ ${debt?.debtor_name ?? "thành viên"} đã được thanh toán?`,
+          okText: "Đã nhận tiền",
+        });
+        if (!ok) return;
+        try {
+          const updated = await withBusy(button, () => patch(`/debts/${debtId}/pay`));
+          state.debts = state.debts.map((d) => (d.id === updated.id ? updated : d));
+          paint();
+          toast.success("Đã xác nhận khoản nợ đã thanh toán");
+        } catch (e) {
+          toast.error(e);
+        }
+      };
+    });
     body.querySelector("#btn-clear")?.addEventListener("click", () => {
       Object.assign(state, { scope: "all", status: "ALL" });
       syncUrl();
@@ -374,6 +404,7 @@ export function render(el, params) {
     (_, data) => {
       Object.assign(state, data);
       if (state.groupId !== "all" && !state.groups.some((g) => String(g.id) === String(state.groupId))) state.groupId = "all";
+      syncUrl(false);
       paint();
     },
     {

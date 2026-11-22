@@ -167,6 +167,16 @@ body:not(.public) #view .form-select:focus {
   body:not(.public) main#view {
     padding: 16px !important;
   }
+  body:not(.public) .app-topbar {
+    padding-right: 0.5rem !important;
+  }
+  body:not(.public) .app-topbar .app-brand {
+    gap: 4px;
+    font-size: 0.9rem;
+  }
+  body:not(.public) .app-topbar .btn-logout {
+    white-space: nowrap;
+  }
 }
 
 #sidebar {

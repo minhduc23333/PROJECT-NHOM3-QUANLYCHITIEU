@@ -3,6 +3,8 @@ import os
 # Test chạy trên SQLite tạm, không cần MySQL
 os.environ["DATABASE_URL"] = "sqlite:///./test.db"
 os.environ["JWT_SECRET"] = "test-secret-test-secret-test-secret-123"
+# Test không gọi Gemini thật dù .env của dev có key (tránh phụ thuộc mạng / tốn tiền)
+os.environ["GEMINI_API_KEY"] = ""
 
 import pytest
 from fastapi.testclient import TestClient

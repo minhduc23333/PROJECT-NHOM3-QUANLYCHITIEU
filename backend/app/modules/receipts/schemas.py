@@ -69,6 +69,7 @@ class ReceiptUpdate(BaseModel):
     subtotal: Money | None = None
     tax_amount: Money | None = None
     service_fee: Money | None = None
+    discount_amount: Money | None = None
     total_amount: Money | None = None
     category: Annotated[str, StringConstraints(strip_whitespace=True, max_length=50)] | None = Field(
         default=None,
@@ -89,6 +90,7 @@ class ReceiptDetail(ReceiptOut):
     subtotal: Decimal | None = None
     tax_amount: Decimal | None = None
     service_fee: Decimal | None = None
+    discount_amount: Decimal | None = None
     items: list[ItemOut] = []
     items_total: Decimal = Decimal(0)       # SUM(line_total) thực tế, để UI so với subtotal
     can_edit_receipt: bool = False            # người tải lên, trừ khi SETTLED
