@@ -174,11 +174,14 @@ export function render(el, params) {
   const filters = el.querySelector("#filters");
   const addBtn = el.querySelector("#btn-add");
 
-  const syncUrl = () => {
+  const syncUrl = (push = true) => {
     const qs = new URLSearchParams({ group: state.groupId });
     if (state.status !== "ALL") qs.set("status", state.status);
-    // Đổi địa chỉ mà không vẽ lại trang (để giữ bộ lọc khi tải lại / gửi link)
-    history.replaceState(null, "", `#/receipts?${qs}`);
+    const nextHash = `#/receipts?${qs}`;
+    if (location.hash !== nextHash) {
+      if (push) history.pushState(null, "", nextHash);
+      else history.replaceState(null, "", nextHash);
+    }
     addBtn.setAttribute("href", `#/receipts/new?group=${state.groupId}`);
   };
 
@@ -352,7 +355,7 @@ export function render(el, params) {
         syncUrl();
         loadReceipts();
       };
-      syncUrl();
+      syncUrl(false);
       loadReceipts();
     },
   );

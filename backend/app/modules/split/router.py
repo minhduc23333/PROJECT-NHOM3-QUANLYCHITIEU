@@ -5,7 +5,7 @@ from fastapi import APIRouter, Query
 from app.core.deps import DB, CurrentUser
 from app.core.errors import COMMON_ERRORS, ErrorResponse
 from app.modules.split import service
-from app.modules.split.schemas import DebtList, SelectionSummary, SplitResult
+from app.modules.split.schemas import DebtList, DebtOut, SelectionSummary, SplitResult
 
 router = APIRouter(tags=["split"], responses=COMMON_ERRORS)
 
@@ -95,3 +95,14 @@ def group_debts(
     mine: bool = Query(False, description="Chỉ các khoản liên quan tới tôi"),
 ):
     return service.group_debts(db, user, group_id, status=status, mine=mine)
+
+
+@router.patch(
+    "/debts/{debt_id}/pay",
+    response_model=DebtOut,
+    summary="Xác nhận khoản nợ đã được thanh toán",
+    description="Chỉ chủ nợ hoặc LEADER ACTIVE của nhóm được xác nhận. Khoản đã PAID trả 409 `DEBT_ALREADY_PAID`.",
+    responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
+def pay_debt(debt_id: int, db: DB, user: CurrentUser):
+    return service.pay_debt(db, user, debt_id)

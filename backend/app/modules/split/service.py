@@ -337,3 +337,41 @@ def group_debts(
     get_group_membership(db, group_id, user.id)
     items = _query_debts(db, Receipt.group_id == group_id, user_id=user.id if mine else None, status=status)
     return _debt_list(items)
+
+
+def pay_debt(db: Session, user: User, debt_id: int) -> DebtOut:
+    """Xác nhận khoản nợ đã được trả; chỉ chủ nợ hoặc LEADER ACTIVE của nhóm được phép."""
+    debt = db.scalar(select(Debt).where(Debt.id == debt_id).with_for_update())
+    if debt is None:
+        raise NotFound("Không tìm thấy khoản nợ")
+
+    receipt = db.get(Receipt, debt.receipt_id)
+    if user.id != debt.creditor_id:
+        member = (
+            db.scalar(
+                select(GroupMember).where(
+                    GroupMember.group_id == receipt.group_id,
+                    GroupMember.user_id == user.id,
+                    GroupMember.role == "LEADER",
+                    GroupMember.status == "ACTIVE",
+                )
+            )
+            if receipt.group_id is not None
+            else None
+        )
+        if member is None:
+            db.rollback()
+            raise Forbidden("Chỉ chủ nợ hoặc trưởng nhóm đang hoạt động mới được xác nhận đã nhận tiền")
+
+    if debt.status == "PAID":
+        db.rollback()
+        raise Conflict("Khoản nợ đã được thanh toán", code="DEBT_ALREADY_PAID")
+
+    debt.status = "PAID"
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return _query_debts(db, Debt.id == debt_id)[0]
