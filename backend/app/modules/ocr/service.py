@@ -155,6 +155,19 @@ def _normalize_items_for_db(parsed: ParsedReceipt) -> None:
     if parsed.items and parsed.total_amount is not None:
         items_sum = sum((i.line_total for i in parsed.items), Decimal(0))
         fees = (parsed.tax_amount or Decimal(0)) + (parsed.service_fee or Decimal(0))
+        if parsed.subtotal is not None and (parsed.tax_amount or 0) > 0:
+            disc = parsed.discount_amount or Decimal(0)
+            if (
+                abs(items_sum - parsed.total_amount) <= Decimal(1000)
+                and abs(parsed.subtotal + fees - disc - parsed.total_amount) <= Decimal(1000)
+                and items_sum > parsed.subtotal
+            ):
+                parsed.subtotal = items_sum
+                parsed.tax_amount = Decimal(0)
+                fees = parsed.service_fee or Decimal(0)
+                parsed.warnings = [
+                    w for w in parsed.warnings if "khác tạm tính" not in w and "khác tổng thanh toán" not in w
+                ]
         implied_discount = items_sum + fees - parsed.total_amount
         disc = parsed.discount_amount or Decimal(0)
         if Decimal(0) < implied_discount <= Decimal(1000):
