@@ -106,4 +106,5 @@ async function boot() {
 
 document.getElementById("btn-logout").onclick = logout;
 window.addEventListener("hashchange", route);
+window.addEventListener("popstate", route);
 boot();

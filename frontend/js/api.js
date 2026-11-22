@@ -10,6 +10,7 @@ const STATUS_MESSAGES = {
   404: "Không tìm thấy dữ liệu",
   409: "Dữ liệu bị trùng",
   413: "File quá lớn",
+  408: "Xử lý quá lâu, vui lòng thử lại hoặc nhập tay",
   422: "Dữ liệu không hợp lệ, kiểm tra lại các ô được đánh dấu",
   500: "Lỗi hệ thống, vui lòng thử lại",
 };
@@ -30,7 +31,7 @@ export class ApiError extends Error {
  */
 export async function api(
   path,
-  { method = "GET", body, formData, auth = true } = {},
+  { method = "GET", body, formData, auth = true, timeoutMs = 0, signal } = {},
 ) {
   const headers = { Accept: "application/json" };
   const token = getToken();
@@ -44,11 +45,33 @@ export async function api(
     payload = JSON.stringify(body);
   }
 
+  const ctrl = timeoutMs > 0 || signal ? new AbortController() : null;
+  let timedOut = false;
+  let timer = null;
+  const onAbort = () => ctrl?.abort();
+  if (ctrl) {
+    if (signal) {
+      if (signal.aborted) ctrl.abort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    }
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        timedOut = true;
+        ctrl.abort();
+      }, timeoutMs);
+    }
+  }
+
   let res;
   try {
-    res = await fetch(API_BASE + path, { method, headers, body: payload });
+    res = await fetch(API_BASE + path, { method, headers, body: payload, signal: ctrl?.signal });
   } catch {
+    if (timedOut) throw new ApiError(408, STATUS_MESSAGES[408], null, "TIMEOUT");
+    if (signal?.aborted) throw new ApiError(0, "Đã hủy xử lý", null, "ABORTED");
     throw new ApiError(0, STATUS_MESSAGES[0]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (signal) signal.removeEventListener("abort", onAbort);
   }
 
   const data = res.status === 204 ? null : await res.json().catch(() => null);
@@ -71,7 +94,7 @@ export async function api(
 }
 
 export const get = (p) => api(p);
-export const post = (p, body) => api(p, { method: "POST", body });
+export const post = (p, body, opts) => api(p, { method: "POST", body, ...opts });
 export const put = (p, body) => api(p, { method: "PUT", body });
 export const patch = (p, body) => api(p, { method: "PATCH", body });
 export const del = (p) => api(p, { method: "DELETE" });

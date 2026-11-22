@@ -26,6 +26,7 @@ class Receipt(Base):
             "AND COALESCE(service_fee,0) >= 0 AND COALESCE(total_amount,0) >= 0",
             name="ck_receipt_amounts",
         ),
+        CheckConstraint("COALESCE(discount_amount,0) >= 0", name="ck_receipt_discount_nonneg"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -38,6 +39,7 @@ class Receipt(Base):
     subtotal: Mapped[Decimal | None] = mapped_column(MONEY)
     tax_amount: Mapped[Decimal | None] = mapped_column(MONEY)
     service_fee: Mapped[Decimal | None] = mapped_column(MONEY)
+    discount_amount: Mapped[Decimal | None] = mapped_column(MONEY)
     total_amount: Mapped[Decimal | None] = mapped_column(MONEY)
     category: Mapped[str | None] = mapped_column(String(50))
     status: Mapped[str] = mapped_column(String(20), default="DRAFT")

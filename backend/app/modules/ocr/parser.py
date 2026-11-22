@@ -34,6 +34,7 @@ class ParsedReceipt:
     subtotal: Decimal | None = None
     tax_amount: Decimal | None = None
     service_fee: Decimal | None = None
+    discount_amount: Decimal | None = None
     total_amount: Decimal | None = None
     warnings: list[str] = field(default_factory=list)
 
@@ -107,12 +108,18 @@ _LETTER = "A-Za-zÀ-ỹ"
 _DIGITISH = re.compile(rf"(?<![{_LETTER}\d])[\dOoIl|]{{1,3}}(?:[.,][\dOoIlCcDQ|]{{3}})+(?![{_LETTER}\d])")
 _DIGIT_FIX = str.maketrans({"O": "0", "o": "0", "I": "1", "l": "1", "|": "1", "C": "0", "c": "0", "D": "0", "Q": "0"})
 _TRAILING_J = re.compile(rf"(?<=\d{{3}})[Jj](?![{_LETTER}\d])")    # '300000J' (viền bảng bị đọc thành J)
+_SPACED_MILLIONS = re.compile(r"(?<![\d.,])([1-9]\d{0,2}) (\d{3}) (\d{3})(?![\d.,]| \d{3})")
+_SPACED_THOUSANDS = re.compile(r"(?<![\d.,])([1-9]\d{1,2}) (000)(?![\d.,])")
+_SPACED_SINGLE_K = re.compile(r"(?<![\d.,])([1-9]) (000)(?=\s+\d{1,3}[.,]\d{3})")
 
 
 def normalize_numbers(line: str) -> str:
-    """'300. 000' -> '300.000', '228.OOO' -> '228.000'. Chỉ đụng vào chuỗi trông như số tiền có dấu nghìn
-    (có ít nhất một chữ số thật) nên không làm hỏng từ như 'No.100' hay 'Tp.HCM'."""
+    """'300. 000' -> '300.000', '228.OOO' -> '228.000', '2 160 000' -> '2.160.000'. Chỉ đụng vào chuỗi trông như số tiền
+    có dấu nghìn (có ít nhất một chữ số thật) nên không làm hỏng từ như 'No.100' hay 'Tp.HCM'."""
     line = _TRAILING_J.sub("", _STRAY_SEP.sub(r"\1\2", line))
+    line = _SPACED_MILLIONS.sub(r"\1.\2.\3", line)
+    line = _SPACED_THOUSANDS.sub(r"\1.\2", line)
+    line = _SPACED_SINGLE_K.sub(r"\1.\2", line)
 
     def fix(m: re.Match) -> str:
         tok = m.group(0)
@@ -127,12 +134,12 @@ _SUMMARY_KEYS = [
     ("subtotal", ("tam tinh", "tong tien hang", "cong tien hang", "subtotal", "sub total", "sub-total")),
     ("tax", ("vat", "gtgt", "thue", "tax")),
     ("service", ("phi dich vu", "phi phuc vu", "phi pv", "service charge", "service fee", "service")),
-    ("total", ("tong cong", "tong thanh toan", "tong tien", "tong so tien", "can thanh toan",
-               "phai thanh toan", "thanh toan", "grand total", "total", "tong")),
+    ("total", ("payment amount", "amount due", "tong cong", "tong thanh toan", "tong tien", "tong so tien",
+               "can thanh toan", "phai thanh toan", "thanh toan", "grand total", "total", "tong")),
 ]
-_SKIP_KEYS = ("khach dua", "tien thua", "tien thi", "tra lai", "tien mat", "tienmat", "the ", "discount",
-              "dt:", "d/c", "sdt", "tel", "hotline", "mst", "ma so thue", "dia chi", "address",
-              "so hoa don", "hoa don so", "ban so", "thu ngan", "cashier", "so bill", "bill no")
+_SKIP_KEYS = ("khach dua", "tien thua", "tien thoi", "tien thi", "tra lai", "tien mat", "tienmat", "the ", "discount",
+              "cash", "return amount", "change", "dt:", "d/c", "sdt", "tel", "hotline", "mst", "ma so thue",
+              "dia chi", "address", "so hoa don", "hoa don so", "ban so", "thu ngan", "cashier", "so bill", "bill no")
 _HEADER_WORDS = ("hoa don", "phieu", "bill", "receipt", "invoice", "dia chi", "dt", "tel",
                  "sdt", "mst", "hotline", "wifi", "website", "www", "http", "ten mon", "stt")
 
@@ -140,10 +147,11 @@ _HEADER_WORDS = ("hoa don", "phieu", "bill", "receipt", "invoice", "dia chi", "d
 # Tesseract hay đọc "Tổng cộng" thành "Téng cộng" / "Tôäg cộng": sau khi bỏ dấu thành "teng cong" nên khớp
 # chính xác thất bại và mất luôn tổng tiền. Khớp mờ chỉ áp cho phần nhãn đứng trước số của dòng có số.
 _FUZZY_KEYS = (
-    ("total", "tong cong"), ("total", "tong tien"), ("total", "thanh toan"),
-    ("subtotal", "tam tinh"), ("service", "phi dich vu"), ("service", "phi phuc vu"),
+    ("total", "tong cong"), ("total", "tong tien"), ("total", "thanh toan"), ("total", "payment amount"),
+    ("subtotal", "tam tinh"), ("subtotal", "subtotal"), ("subtotal", "sub total"),
+    ("service", "phi dich vu"), ("service", "phi phuc vu"),
 )
-FUZZY_RATIO = 0.8
+FUZZY_RATIO = 0.75
 
 
 def _fuzzy_summary(folded: str) -> str | None:
@@ -169,11 +177,13 @@ def classify_summary(folded: str) -> str | None:
     return best[2] if best else _fuzzy_summary(folded)
 
 
-def pick_amount(tokens: list[tuple[int, Decimal]]) -> Decimal:
+def pick_amount(tokens: list[tuple[int, Decimal]]) -> Decimal | None:
     """Số tiền của dòng tổng kết: số cuối cùng, trừ khi đó chỉ là chữ số rác (< 1.000đ) đứng sau số tiền thật
-    ('Tạm tính: 228.000 3' -> 228.000, không phải 3)."""
+    ('Tạm tính: 228.000 3' -> 228.000, không phải 3). Bỏ qua số < 100đ (tránh nhầm 'VAT 8' thành 8đ)."""
     real = [v for _, v in tokens if v >= MIN_LINE_TOTAL]
-    return real[-1] if real else tokens[-1][1]
+    if real:
+        return real[-1]
+    return tokens[-1][1] if tokens[-1][1] >= Decimal(100) else None
 
 
 # năm 4 chữ số dạng 20xx được nhận kể cả khi dính liền giờ ("10/09/202210:54"); năm 2 chữ số thì phải đứng riêng
@@ -213,6 +223,7 @@ def find_merchant(lines: list[str]) -> str | None:
 
 _QTY_PREFIX = re.compile(r"^\s*(\d{1,2})\s*[xX*]\s+")
 _INDEX_PREFIX = re.compile(r"^\s*\d{1,2}[.)]\s+")
+_BARE_INDEX_PREFIX = re.compile(rf"^\s*(?:[|\[]\s*)?\d{{1,2}}\s*[|]?\s+(?=[{_LETTER}])")
 _QTY_SUFFIX = re.compile(r"\s+[xX*]?\s*(\d{1,2})\s*$")
 
 
@@ -275,6 +286,10 @@ def _junk_after_amount(text: str, pos: int) -> bool:
 def parse_item_line(line: str) -> tuple[ParsedItem | None, str | None]:
     """Một dòng món -> (ParsedItem, warning). Không phải dòng món -> (None, None)."""
     text = _INDEX_PREFIX.sub("", line)   # bỏ số thứ tự "1. " đầu dòng
+    if text == line:
+        stripped = _BARE_INDEX_PREFIX.sub("", text)
+        if stripped != text and len(money_tokens(stripped)) >= 2:
+            text = stripped              # bảng có cột STT không dấu chấm: "1 Ốc Hương Kg 3,0 720.000 2.160.000"
     tokens = money_tokens(text)
     if not tokens:
         return None, None
@@ -292,9 +307,9 @@ def parse_item_line(line: str) -> tuple[ParsedItem | None, str | None]:
     name = _clean_name(text[:first_pos])
     values = [v for _, v in tokens]
 
-    # SL nằm ngay trước các số tiền: "Cà phê 2 35.000 70.000" -> "2" bị coi là số tiền nhỏ
+    # SL nằm ngay trước các số tiền: "Cà phê 2 35.000 70.000" hoặc "Cá Song 7,2 650.000 4.680.000"
     qty: Decimal | None = prefix_qty
-    if qty is None and len(values) >= 2 and values[0] == values[0].to_integral_value() and 1 <= values[0] <= 99 \
+    if qty is None and len(values) >= 2 and Decimal("0.01") <= values[0] <= 99 \
             and not re.search(r"[.,]\d{3}", text[tokens[0][0]:tokens[0][0] + 6]):
         qty, values = values[0], values[1:]
     if qty is None:
@@ -337,9 +352,25 @@ def parse_item_line(line: str) -> tuple[ParsedItem | None, str | None]:
     return ParsedItem(name, qty, unit_price, line_total), warning
 
 
-_PAYMENT_ZONE_KEYS = ("diem tren", "tien mat", "tienmat", "tien thua", "tien thi",
-                      "khach dua", "tra lai", "da bao gom", "da bao gdm")
+_PAYMENT_ZONE_KEYS = (
+    "diem tren", "tien mat", "tienmat", "tien thua", "tien thoi", "tien thi",
+    "khach dua", "tra lai", "da bao gom", "da bao gdm", "da lam tron", "da lam tren",
+    "lam tron", "chiet khau", "khuyen mai", "cash", "return amount",
+)
+_ROUNDED_TOTAL_KEYS = ("da lam tron", "da lam tren", "lam tron", "lam tren")
+_DISCOUNT_KEYS = ("giam gia", "chiet khau", "khuyen mai", "voucher", "discount")
 _TOTAL_AFTER_DISCOUNT = ("da bao gom giam gia", "da bao gdm giam gia", "bao gom giam gia", "bao gdm giam gia")
+_TOTAL_AFTER_DISCOUNT_RE = re.compile(r"bao\s+g[o0d]m\s+giam\s+gi[ad]")
+
+
+def _is_total_after_discount(folded: str) -> bool:
+    if any(k in folded for k in _TOTAL_AFTER_DISCOUNT) or _TOTAL_AFTER_DISCOUNT_RE.search(folded):
+        return True
+    if any(c.isdigit() for c in folded):
+        label = re.split(r"\d", folded, maxsplit=1)[0].strip(" ()[]:.-*|_=")
+        if 10 <= len(label) <= 28:
+            return SequenceMatcher(None, label, "da bao gom giam gia").ratio() >= 0.78
+    return False
 
 
 def _numbers_only(line: str) -> bool:
@@ -384,7 +415,7 @@ def _repair_one_digit(result: ParsedReceipt) -> None:
     if not result.items or result.total_amount is None:
         return
     target = result.subtotal if result.subtotal is not None else (
-        result.total_amount - (result.tax_amount or 0) - (result.service_fee or 0))
+        result.total_amount - (result.tax_amount or 0) - (result.service_fee or 0) + (result.discount_amount or 0))
     total = sum(i.line_total for i in result.items)
     if abs(target - total) <= ROUNDING_TOLERANCE or target <= 0:
         return
@@ -426,15 +457,40 @@ def parse_receipt(lines: list[str]) -> ParsedReceipt:
         if waiting and _numbers_only(line) and not _DATE_RE.search(line):
             toks = [t for t in money_tokens(line, spaced=True) if re.search(r"[.,]\d{3}|\s\d{3}", line)]
             if toks:   # chỉ nhận số có dấu nghìn: tránh nhầm số điện thoại / mã số đứng sau nhãn
-                totals_seen[waiting] = pick_amount(toks)
-                in_items_zone = False
+                amt = pick_amount(toks)
+                if amt is not None:
+                    totals_seen[waiting] = amt
+                    in_items_zone = False
                 continue
-        # "(Đã bao gồm giảm giá) 242.841" = tổng phải trả, không phải dòng giảm giá
-        if any(k in f for k in _TOTAL_AFTER_DISCOUNT):
+        # "(Đã bao gồm giảm giá) 242.641" = tổng tiền hàng trước khi làm tròn tiền mặt
+        if _is_total_after_discount(f):
             toks = money_tokens(line, spaced=True)
             if toks:
-                totals_seen["total"] = pick_amount(toks)
-                in_items_zone = False
+                amt = pick_amount(toks)
+                if amt is not None:
+                    totals_seen["total"] = amt
+                    in_items_zone = False
+            continue
+        # "(Đã làm tròn) 242,000" = tổng thực trả sau làm tròn (VD: Bách Hóa Xanh 242.641 -> 242.000, giảm 641đ)
+        if any(k in f for k in _ROUNDED_TOTAL_KEYS) and not _numbers_only(line):
+            toks = money_tokens(line, spaced=True)
+            if toks:
+                amt = pick_amount(toks)
+                if amt is not None:
+                    prev_total = totals_seen.get("total")
+                    if prev_total is not None and 0 < prev_total - amt <= ROUNDING_TOLERANCE:
+                        totals_seen.setdefault("subtotal", prev_total)
+                        totals_seen["discount"] = prev_total - amt
+                    totals_seen["total"] = amt
+            in_items_zone = False
+            continue
+        if any(k in f for k in _DISCOUNT_KEYS) and not _numbers_only(line):
+            toks = money_tokens(line, spaced=True)
+            if toks:
+                amt = pick_amount(toks)
+                if amt is not None:
+                    totals_seen["discount"] = amt
+            in_items_zone = False
             continue
         if any(k in f for k in _PAYMENT_ZONE_KEYS) and not _numbers_only(line):
             in_items_zone = False
@@ -448,8 +504,10 @@ def parse_receipt(lines: list[str]) -> ParsedReceipt:
         if kind:
             tokens = money_tokens(line, spaced=True)
             if tokens:  # dòng tiêu đề như "HÓA ĐƠN THANH TOÁN" không có số -> chưa hết vùng món
-                in_items_zone = False
-                totals_seen[kind] = pick_amount(tokens)
+                amt = pick_amount(tokens)
+                if amt is not None:
+                    in_items_zone = False
+                    totals_seen[kind] = amt
             else:
                 pending_summary = kind
             continue
@@ -487,19 +545,21 @@ def parse_receipt(lines: list[str]) -> ParsedReceipt:
     result.subtotal = totals_seen.get("subtotal")
     result.tax_amount = totals_seen.get("tax")
     result.service_fee = totals_seen.get("service")
+    result.discount_amount = totals_seen.get("discount")
     result.total_amount = totals_seen.get("total")
 
     _repair_one_digit(result)
+    disc = result.discount_amount or Decimal(0)
     if result.subtotal is not None and result.items:
         s = sum(i.line_total for i in result.items)
         if s != result.subtotal:
             result.warnings.append(f"Tổng các dòng món ({s}) khác tạm tính ({result.subtotal})")
     if result.total_amount is not None and result.subtotal is None and result.items:
-        s = sum(i.line_total for i in result.items) + (result.tax_amount or 0) + (result.service_fee or 0)
+        s = sum(i.line_total for i in result.items) + (result.tax_amount or 0) + (result.service_fee or 0) - disc
         if abs(s - result.total_amount) > ROUNDING_TOLERANCE:   # lệch < 1.000đ là làm tròn tiền, không phải lỗi đọc
             result.warnings.append(f"Tổng các dòng món + thuế + phí ({s}) khác tổng thanh toán ({result.total_amount}): có thể đọc thiếu/sai món")
     if result.total_amount is not None and result.subtotal is not None:
-        expected = result.subtotal + (result.tax_amount or 0) + (result.service_fee or 0)
+        expected = result.subtotal + (result.tax_amount or 0) + (result.service_fee or 0) - disc
         if expected != result.total_amount:
             result.warnings.append(f"Tổng thanh toán ({result.total_amount}) khác tạm tính + VAT + phí ({expected})")
     return result

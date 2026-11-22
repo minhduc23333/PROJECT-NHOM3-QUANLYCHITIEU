@@ -278,12 +278,20 @@ def verify_receipt(db: Session, user: User, receipt_id: int, data: VerifyIn) -> 
     if receipt.total_amount is None:
         errors.append({"field": "total_amount", "message": "Chưa có tổng tiền (total_amount)"})
     elif receipt.subtotal is not None:
-        expected_total = receipt.subtotal + (receipt.tax_amount or ZERO) + (receipt.service_fee or ZERO)
-        if receipt.total_amount != expected_total:
+        discount = receipt.discount_amount or ZERO
+        expected_total = receipt.subtotal + (receipt.tax_amount or ZERO) + (receipt.service_fee or ZERO) - discount
+        if expected_total < ZERO:
+            errors.append(
+                {
+                    "field": "discount_amount",
+                    "message": f"Giảm giá / làm tròn ({discount}) không được lớn hơn tạm tính + thuế + phí",
+                }
+            )
+        elif receipt.total_amount != expected_total:
             errors.append(
                 {
                     "field": "total_amount",
-                    "message": f"total_amount ({receipt.total_amount}) ≠ subtotal + thuế + phí dịch vụ ({expected_total})",
+                    "message": f"total_amount ({receipt.total_amount}) ≠ subtotal + thuế + phí - giảm giá ({expected_total})",
                 }
             )
 

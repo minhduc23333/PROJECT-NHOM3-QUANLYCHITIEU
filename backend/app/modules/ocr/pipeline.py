@@ -43,8 +43,9 @@ def _consistent(p: ParsedReceipt) -> bool:
     if p.total_amount is None or not p.items:
         return False
     fees = (p.tax_amount or 0) + (p.service_fee or 0)
+    discount = p.discount_amount or 0
     base = p.subtotal if p.subtotal is not None else _items_sum(p)
-    return _items_sum(p) == base and base + fees == p.total_amount
+    return _items_sum(p) == base and base + fees - discount == p.total_amount
 
 
 def score(p: ParsedReceipt, ocr: OcrResult) -> float:
@@ -64,7 +65,7 @@ def score(p: ParsedReceipt, ocr: OcrResult) -> float:
         s += 7
     elif p.total_amount and p.items:
         # đọc thiếu/sai món thì tổng các món lệch xa tổng tiền: chỉ thưởng khi tiệm cận > 50% (0..4)
-        base = p.subtotal if p.subtotal is not None else p.total_amount - (p.tax_amount or 0) - (p.service_fee or 0)
+        base = p.subtotal if p.subtotal is not None else p.total_amount - (p.tax_amount or 0) - (p.service_fee or 0) + (p.discount_amount or 0)
         if base and base > 0:
             closeness = 1.0 - float(abs(_items_sum(p) - base) / base)
             s += 4 * max(0.0, (closeness - 0.5) / 0.5)
@@ -191,7 +192,7 @@ def _reconcile_total(best: Attempt, attempts: list[Attempt]) -> None:
     p = best.parsed
     if p.total_amount is None or not p.items or p.subtotal is not None:
         return
-    expected = _items_sum(p) + (p.tax_amount or 0) + (p.service_fee or 0)
+    expected = _items_sum(p) + (p.tax_amount or 0) + (p.service_fee or 0) - (p.discount_amount or 0)
     if expected == p.total_amount:
         return
     for other in attempts:

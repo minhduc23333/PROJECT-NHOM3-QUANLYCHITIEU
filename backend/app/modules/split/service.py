@@ -97,6 +97,10 @@ def _fee_total(receipt: Receipt) -> Decimal:
     return (receipt.tax_amount or ZERO) + (receipt.service_fee or ZERO)
 
 
+def _discount_amount(receipt: Receipt) -> Decimal:
+    return receipt.discount_amount or ZERO
+
+
 # ---------- 1. Chọn / bỏ chọn món + tổng tạm tính ----------
 def selection_summary(db: Session, user: User, receipt_id: int) -> SelectionSummary:
     receipt, _ = _load_group_receipt(db, user, receipt_id)
@@ -107,7 +111,7 @@ def _summary(db: Session, receipt: Receipt, user: User) -> SelectionSummary:
     items = _items(db, receipt.id)
     members = _active_members(db, receipt.group_id)
     selectors = _selectors(db, receipt.id, {uid for uid, _ in members})
-    shares = calc.compute_shares({i.id: i.line_total for i in items}, selectors, _fee_total(receipt))
+    shares = calc.compute_shares({i.id: i.line_total for i in items}, selectors, _fee_total(receipt), _discount_amount(receipt))
 
     chosen_by: dict[int, list[int]] = {}
     for item_id, users in selectors.items():
@@ -133,6 +137,7 @@ def _summary(db: Session, receipt: Receipt, user: User) -> SelectionSummary:
         can_select=not state.is_settled(receipt),
         items_total=sum((i.line_total for i in items), ZERO),
         fee_total=_fee_total(receipt),
+        discount_amount=_discount_amount(receipt),
         my_selected_item_ids=sorted(chosen_by.get(user.id, [])),
         members=member_rows,
         unselected_items=[
@@ -195,14 +200,15 @@ def finalize_receipt(db: Session, user: User, receipt_id: int) -> SplitResult:
             errors.append({"field": "items", "message": f"Món '{i.item_name}' (id {i.id}) chưa có ai chọn"})
 
     items_sum = sum((i.line_total for i in items), ZERO)
-    expected_total = items_sum + _fee_total(receipt)
+    discount = _discount_amount(receipt)
+    expected_total = items_sum + _fee_total(receipt) - discount
     if receipt.subtotal != items_sum:
         errors.append({"field": "subtotal", "message": f"subtotal ({receipt.subtotal}) ≠ tổng các dòng món ({items_sum})"})
     if receipt.total_amount is None or receipt.total_amount != expected_total:
         errors.append(
             {
                 "field": "total_amount",
-                "message": f"total_amount ({receipt.total_amount}) ≠ tổng món + thuế + phí dịch vụ ({expected_total})",
+                "message": f"total_amount ({receipt.total_amount}) ≠ tổng món + thuế + phí - giảm giá ({expected_total})",
             }
         )
     elif receipt.total_amount <= 0:
@@ -217,7 +223,7 @@ def finalize_receipt(db: Session, user: User, receipt_id: int) -> SplitResult:
 
     payer_id = receipt.payer_id
     shares = calc.assign_remainder(
-        calc.compute_shares({i.id: i.line_total for i in items}, selectors, _fee_total(receipt)),
+        calc.compute_shares({i.id: i.line_total for i in items}, selectors, _fee_total(receipt), discount),
         payer_id,
         receipt.total_amount,
     )
@@ -331,3 +337,41 @@ def group_debts(
     get_group_membership(db, group_id, user.id)
     items = _query_debts(db, Receipt.group_id == group_id, user_id=user.id if mine else None, status=status)
     return _debt_list(items)
+
+
+def pay_debt(db: Session, user: User, debt_id: int) -> DebtOut:
+    """Xác nhận khoản nợ đã được trả; chỉ chủ nợ hoặc LEADER ACTIVE của nhóm được phép."""
+    debt = db.scalar(select(Debt).where(Debt.id == debt_id).with_for_update())
+    if debt is None:
+        raise NotFound("Không tìm thấy khoản nợ")
+
+    receipt = db.get(Receipt, debt.receipt_id)
+    if user.id != debt.creditor_id:
+        member = (
+            db.scalar(
+                select(GroupMember).where(
+                    GroupMember.group_id == receipt.group_id,
+                    GroupMember.user_id == user.id,
+                    GroupMember.role == "LEADER",
+                    GroupMember.status == "ACTIVE",
+                )
+            )
+            if receipt.group_id is not None
+            else None
+        )
+        if member is None:
+            db.rollback()
+            raise Forbidden("Chỉ chủ nợ hoặc trưởng nhóm đang hoạt động mới được xác nhận đã nhận tiền")
+
+    if debt.status == "PAID":
+        db.rollback()
+        raise Conflict("Khoản nợ đã được thanh toán", code="DEBT_ALREADY_PAID")
+
+    debt.status = "PAID"
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return _query_debts(db, Debt.id == debt_id)[0]

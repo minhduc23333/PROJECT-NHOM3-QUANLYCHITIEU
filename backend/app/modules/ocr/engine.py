@@ -7,6 +7,8 @@ Cấu hình trong .env: OCR_ENGINE (tesseract | easyocr), OCR_LANG, OCR_TIMEOUT_
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
@@ -115,6 +117,29 @@ def group_into_lines(boxes: list[OcrBox]) -> list[str]:
     return [" ".join(x.text for x in sorted(r, key=lambda b: b.x)) for r in rows]
 
 
+_WIN_TESSERACT_PATHS = (
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    r"D:\Tesseract-OCR\tesseract.exe",
+    r"D:\Program Files\Tesseract-OCR\tesseract.exe",
+)
+
+
+def _configure_tesseract(pytesseract) -> None:
+    """Trỏ pytesseract tới tesseract.exe. Ưu tiên TESSERACT_CMD (bỏ ngoặc kép/khoảng trắng thừa hay dính khi
+    copy đường dẫn Windows vào .env); không đặt thì để PATH quyết định, PATH không có thì dò các thư mục cài mặc định."""
+    cmd = (settings.TESSERACT_CMD or "").strip().strip('"').strip("'").strip()
+    if cmd:
+        pytesseract.pytesseract.tesseract_cmd = cmd
+        return
+    if shutil.which(pytesseract.pytesseract.tesseract_cmd):
+        return
+    for cand in _WIN_TESSERACT_PATHS:
+        if os.path.isfile(cand):
+            pytesseract.pytesseract.tesseract_cmd = cand
+            return
+
+
 _tess_langs: str | None = None
 
 
@@ -131,6 +156,8 @@ def _resolve_tess_lang(pytesseract) -> str:
         installed = set(pytesseract.get_languages(config=""))
     except pytesseract.TesseractNotFoundError:  # để image_to_data báo lỗi Tesseract rõ ràng hơn
         return settings.OCR_LANG
+    except Exception as exc:  # noqa: BLE001  TESSDATA_PREFIX sai... -> OcrError (API trả FAILED) thay vì 500
+        raise OcrError(f"Không đọc được danh sách ngôn ngữ Tesseract: {exc}") from exc
     usable = [x for x in wanted if x in installed]
     if not usable:
         raise OcrError(f"Tesseract chưa cài ngôn ngữ nào trong OCR_LANG={settings.OCR_LANG}")
@@ -147,8 +174,7 @@ def _tesseract(img: np.ndarray, psm: int = 6) -> list[OcrBox]:
         import pytesseract
     except ImportError as exc:  # pragma: no cover
         raise OcrError("Chưa cài pytesseract (pip install pytesseract)") from exc
-    if settings.TESSERACT_CMD:
-        pytesseract.pytesseract.tesseract_cmd = settings.TESSERACT_CMD
+    _configure_tesseract(pytesseract)
     try:
         d = pytesseract.image_to_data(
             img,
@@ -156,11 +182,16 @@ def _tesseract(img: np.ndarray, psm: int = 6) -> list[OcrBox]:
             # oem 1 = LSTM; dpi 300 để Tesseract khỏi đoán (ảnh từ mảng numpy không có DPI)
             config=f"--oem 1 --psm {psm} --dpi 300",
             output_type=pytesseract.Output.DICT,
+            timeout=min(settings.OCR_TIMEOUT_SEC, 12.0),   # tối đa 12s/lượt, kill ngay tiến trình treo
         )
     except pytesseract.TesseractNotFoundError as exc:
-        raise OcrError("Không tìm thấy Tesseract; đặt TESSERACT_CMD trong .env") from exc
+        raise OcrError("Không tìm thấy Tesseract; cài Tesseract rồi đặt TESSERACT_CMD trong backend/.env") from exc
     except pytesseract.TesseractError as exc:
         raise OcrError(f"Tesseract lỗi: {exc}") from exc
+    except RuntimeError as exc:   # pytesseract báo timeout bằng RuntimeError('Tesseract process timeout')
+        raise OcrTimeout(f"Tesseract quá {settings.OCR_TIMEOUT_SEC:.0f}s") from exc
+    except (OSError, ValueError) as exc:   # file tạm bị khóa (Windows), ảnh không hợp lệ...
+        raise OcrError(f"Không chạy được Tesseract: {exc}") from exc
     boxes = []
     for i, txt in enumerate(d["text"]):
         txt = (txt or "").strip()
@@ -178,14 +209,13 @@ def _tesseract(img: np.ndarray, psm: int = 6) -> list[OcrBox]:
 def detect_rotation(img: np.ndarray) -> int | None:
     """Số lần xoay 90° NGƯỢC chiều kim đồng hồ (1..3) để chữ thẳng đứng theo Tesseract OSD; 0 = đã thẳng;
     None nếu không xác định được (ảnh quá ít chữ, thiếu osd.traineddata, engine khác Tesseract...)."""
-    if settings.OCR_ENGINE != "tesseract":
+    if settings.OCR_ENGINE not in ("tesseract", "auto", "gemini"):
         return None
     try:
         import pytesseract
 
-        if settings.TESSERACT_CMD:
-            pytesseract.pytesseract.tesseract_cmd = settings.TESSERACT_CMD
-        osd = pytesseract.image_to_osd(img, config="--psm 0", output_type=pytesseract.Output.DICT)
+        _configure_tesseract(pytesseract)
+        osd = pytesseract.image_to_osd(img, config="--psm 0", output_type=pytesseract.Output.DICT, timeout=5)
         if float(osd.get("orientation_conf", 0)) < 1.0:
             return None
         return (4 - int(osd.get("rotate", 0)) // 90) % 4    # OSD báo độ xoay THUẬN chiều kim đồng hồ cần để sửa
@@ -213,7 +243,12 @@ def _easyocr(img: np.ndarray, psm: int = 6) -> list[OcrBox]:  # noqa: ARG001  (p
     return [b for b in boxes if b.text]
 
 
-_ENGINES = {"tesseract": _tesseract, "easyocr": _easyocr}
+_ENGINES = {
+    "tesseract": _tesseract,
+    "easyocr": _easyocr,
+    "auto": _tesseract,
+    "gemini": _tesseract,
+}
 
 
 def recognize(img: np.ndarray, psm: int = 6) -> OcrResult:
@@ -232,7 +267,7 @@ def _recognize(path: str) -> OcrResult:
     return recognize(img)
 
 
-_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ocr")
+_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ocr")
 
 
 def _run_with_timeout(fn, arg, timeout: float | None):

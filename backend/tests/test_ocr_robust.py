@@ -153,7 +153,9 @@ def test_real_bhx_receipt():
         (Decimal("0.49"), Decimal(24900), Decimal(12199)),
         (Decimal("1.264"), Decimal(49005), Decimal(61943)),       # bỏ cột giá gốc gạch ngang 50.000
     ]
-    assert r.total_amount == Decimal(242641)
+    assert r.subtotal == Decimal(242641)
+    assert r.discount_amount == Decimal(641)
+    assert r.total_amount == Decimal(242000)
     assert any("tự sửa" in w for w in r.warnings)                 # số bị sửa phải có cảnh báo
 
 

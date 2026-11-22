@@ -16,7 +16,7 @@ const STATUS = {
 };
 
 /** Kiểm tra số liệu, tách riêng để dễ test. Trả về danh sách cảnh báo (rỗng = khớp hết). */
-export function checkTotals({ itemsSum, subtotal, tax, fee, total, itemCount }) {
+export function checkTotals({ itemsSum, subtotal, tax, fee, discount = 0, total, itemCount }) {
   const out = [];
   if (!itemCount) out.push({ field: "items", text: "Hóa đơn chưa có dòng món nào." });
   if (subtotal == null) out.push({ field: "subtotal", text: "Chưa có tạm tính." });
@@ -27,12 +27,20 @@ export function checkTotals({ itemsSum, subtotal, tax, fee, total, itemCount }) 
       fix: "sub",
     });
   if (total == null) out.push({ field: "total_amount", text: "Chưa có tổng tiền." });
-  else if (subtotal != null && subtotal + tax + fee !== total)
-    out.push({
-      field: "total_amount",
-      text: `Tạm tính + VAT + phí = ${formatVND(subtotal + tax + fee)} khác tổng tiền ${formatVND(total)} (lệch ${formatVND(Math.abs(subtotal + tax + fee - total))}).`,
-      fix: "total",
-    });
+  else if (subtotal != null) {
+    const expected = subtotal + tax + fee - discount;
+    if (expected < 0)
+      out.push({
+        field: "discount_amount",
+        text: `Giảm giá / làm tròn (${formatVND(discount)}) lớn hơn tạm tính + VAT + phí (${formatVND(subtotal + tax + fee)}).`,
+      });
+    else if (expected !== total)
+      out.push({
+        field: "total_amount",
+        text: `Tạm tính + VAT + phí${discount ? " − giảm giá" : ""} = ${formatVND(expected)} khác tổng tiền ${formatVND(total)} (lệch ${formatVND(Math.abs(expected - total))}).`,
+        fix: "total",
+      });
+  }
   return out;
 }
 
@@ -74,6 +82,12 @@ const CSS = `
 .items-table td { vertical-align:middle; } .items-table input { min-width:0; }
 .money-grid .form-label { font-size:.85rem; color:var(--muted); margin-bottom:4px; }
 .money-grid .input-group-text { background:#faf8fd; }
+.money-grid > [class*="col"] { min-width:0; }
+@media (min-width: 768px) {
+  .money-grid > [class*="col"] { flex:0 0 20%; max-width:20%; }
+  .money-grid .rv-money-fix { width:100%; padding-inline:6px; text-align:center; overflow:hidden; }
+  .money-grid .rv-money-fix span { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+}
 .money-grid .rv-money-fix {
   display:flex; align-items:center; justify-content:center; gap:6px; width:max-content; max-width:100%;
   margin:7px auto 0; padding:5px 12px; border:1px solid #d9c9ed; border-radius:999px;
@@ -254,7 +268,8 @@ export function render(el, params) {
               ${moneyInput("subtotal", "Tạm tính", d.subtotal, headerOn, "sub", "Lấy tổng các món")}
               ${moneyInput("tax_amount", "VAT", d.tax_amount, headerOn)}
               ${moneyInput("service_fee", "Phí dịch vụ", d.service_fee, headerOn)}
-              ${moneyInput("total_amount", "Tổng tiền", d.total_amount, headerOn, "total", "Tính tạm tính + VAT + phí")}
+              ${moneyInput("discount_amount", "Giảm giá / làm tròn", d.discount_amount, headerOn)}
+              ${moneyInput("total_amount", "Tổng tiền", d.total_amount, headerOn, "total", "Tổng chi phí")}
             </div>
             <div id="checks" class="mb-3" aria-live="polite"></div>
 
@@ -283,10 +298,11 @@ export function render(el, params) {
       </div>`;
 
     function moneyInput(name, label, value, on, fix, fixText) {
-      return `<div class="col-6 col-md-3">
+      const zeroDefault = name === "tax_amount" || name === "service_fee" || name === "discount_amount";
+      return `<div class="${name === "total_amount" ? "col-12 col-md-4" : "col-6 col-md-4"}">
         <label class="form-label" for="f-${name}">${label} <span data-miss="${name}"></span></label>
         <div class="input-group input-group-sm has-validation">
-          <input class="form-control text-end" id="f-${name}" name="${name}" inputmode="numeric" data-money placeholder="${name === "tax_amount" || name === "service_fee" ? "0" : "—"}"
+          <input class="form-control text-end" id="f-${name}" name="${name}" inputmode="numeric" data-money placeholder="${zeroDefault ? "0" : "—"}"
                  value="${value != null ? formatNumber(value) : ""}" ${on ? "" : "disabled"}>
           <span class="input-group-text">₫</span>
           <div class="invalid-feedback"></div>
@@ -359,6 +375,7 @@ export function render(el, params) {
         subtotal: moneyVal(form.elements.subtotal),
         tax: moneyVal(form.elements.tax_amount) ?? 0,
         fee: moneyVal(form.elements.service_fee) ?? 0,
+        discount: moneyVal(form.elements.discount_amount) ?? 0,
         total: moneyVal(form.elements.total_amount),
       };
       const missing = {
@@ -390,7 +407,7 @@ export function render(el, params) {
       if (kind === "sub") form.elements.subtotal.value = formatNumber(v.itemsSum);
       if (kind === "total") {
         const sub = moneyVal(form.elements.subtotal) ?? 0;
-        form.elements.total_amount.value = formatNumber(sub + v.tax + v.fee);
+        form.elements.total_amount.value = formatNumber(Math.max(0, sub + v.tax + v.fee - v.discount));
       }
       refresh();
       box.querySelector("#save-state") && (box.querySelector("#save-state").textContent = "Có thay đổi chưa lưu");
@@ -429,6 +446,7 @@ export function render(el, params) {
 
     /* ----- Xóa hóa đơn ----- */
     box.querySelector("#btn-delete-receipt")?.addEventListener("click", async (e) => {
+      const button = e.currentTarget;
       const ok = await confirmDialog({
         title: "Xóa hóa đơn?",
         message: `Hóa đơn “${d.merchant_name || "Chưa có tên"}” và dữ liệu chia tiền liên quan sẽ bị xóa. Không thể hoàn tác.`,
@@ -438,7 +456,7 @@ export function render(el, params) {
       });
       if (!ok) return;
       try {
-        await withBusy(e.currentTarget, () => del(`/receipts/${d.id}`));
+        await withBusy(button, () => del(`/receipts/${d.id}`));
         toast.success("Đã xóa hóa đơn");
         window.location.hash = back;
       } catch (err) {
@@ -449,7 +467,7 @@ export function render(el, params) {
     /* ----- Đọc ảnh tự động (khi còn PENDING) ----- */
     box.querySelector("#btn-ocr")?.addEventListener("click", async (e) => {
       try {
-        const res = await withBusy(e.currentTarget, () => post(`/ocr/receipts/${d.id}`));
+        const res = await withBusy(e.currentTarget, () => post(`/ocr/receipts/${d.id}`, undefined, { timeoutMs: 300000 }));
         if (res?.receipt?.ocr_status === "FAILED")
           toast.error(new Error(res.warnings?.[0] ?? "Vẫn không đọc được ảnh, hãy nhập tay"));
         else toast.info(res?.warnings?.length ? `Đã đọc ảnh. Lưu ý: ${res.warnings[0]}` : "Đã đọc ảnh, kiểm tra lại kết quả");
@@ -524,12 +542,14 @@ export function render(el, params) {
           subtotal: moneyVal(form.elements.subtotal),
           tax_amount: moneyVal(form.elements.tax_amount) ?? 0,
           service_fee: moneyVal(form.elements.service_fee) ?? 0,
+          discount_amount: moneyVal(form.elements.discount_amount) ?? 0,
           total_amount: moneyVal(form.elements.total_amount),
         };
         // Chỉ gửi trường đã đổi (tránh làm hóa đơn đã xác nhận bị mở lại không cần thiết)
         const changed = Object.fromEntries(
           Object.entries(header).filter(([k, val]) => {
-            const before = ["subtotal", "tax_amount", "service_fee", "total_amount"].includes(k) ? num(d[k]) ?? (k === "tax_amount" || k === "service_fee" ? 0 : null) : (d[k] ?? null);
+            const zeroFields = ["tax_amount", "service_fee", "discount_amount"];
+            const before = ["subtotal", "total_amount", ...zeroFields].includes(k) ? num(d[k]) ?? (zeroFields.includes(k) ? 0 : null) : (d[k] ?? null);
             return before !== val;
           }),
         );
