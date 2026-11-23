@@ -134,6 +134,31 @@ def test_select_is_idempotent_and_only_for_self(client, team):
     assert s["my_selected_item_ids"] == [i]  # B không thể bỏ chọn hộ A
 
 
+def test_leader_can_select_for_other_members_but_members_cannot(client, team):
+    rid, (item_id,) = make_receipt(client, team, [("Món chung", 100000, 1)])
+    target_id = team["uid"]["B"]
+    url = f"/api/receipts/{rid}/items/{item_id}/selection"
+
+    selected = client.put(f"{url}?user_id={target_id}", headers=team["h"]["L"])
+    assert selected.status_code == 200, selected.text
+    member_selections = {m["user_id"]: m["selected_item_ids"] for m in selected.json()["members"]}
+    assert member_selections[target_id] == [item_id]
+
+    denied = client.put(f"{url}?user_id={target_id}", headers=team["h"]["A"])
+    assert denied.status_code == 403
+    outside_member = client.put(f"{url}?user_id={team['uid']['X']}", headers=team["h"]["L"])
+    assert outside_member.status_code == 403
+
+    removed = client.delete(f"{url}?user_id={target_id}", headers=team["h"]["L"])
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["unselected_items"][0]["id"] == item_id
+    with SessionLocal() as db:
+        db.scalar(select(GroupMember).where(GroupMember.user_id == target_id)).status = "REMOVED"
+        db.commit()
+    inactive_member = client.put(f"{url}?user_id={target_id}", headers=team["h"]["L"])
+    assert inactive_member.status_code == 403
+
+
 def test_selection_permissions_and_errors(client, team):
     rid, (i,) = make_receipt(client, team, [("A", 100000, 1)])
     url = f"/api/receipts/{rid}/items/{i}/selection"

@@ -73,6 +73,7 @@ def test_only_settled_receipts_are_counted(client, team):
     assert a["group_count"] == 1 and a["receipt_count"] == 1
     assert D(a["group_spent"]) == 300000          # Σ total_amount, chỉ SETTLED
     assert D(a["personal_spent"]) == 100000       # Σ final_amount của riêng A
+    assert D(a["monthly"][-1]["total"]) == 100000  # biểu đồ tháng dùng đúng phần chia cá nhân
     assert len(a["recent_receipts"]) == 1
     assert D(a["recent_receipts"][0]["my_amount"]) == 100000
     assert a["recent_receipts"][0]["group_name"] == "Nhóm"

@@ -1,7 +1,7 @@
 """Module chia tiền: chọn món → chốt (tính chia + tạo công nợ) → xem công nợ.
 
 Phạm vi quyền:
-  * Chọn/bỏ chọn món: chỉ thành viên ACTIVE của nhóm, chỉ cho CHÍNH MÌNH. Hóa đơn SETTLED bị khóa (409).
+  * Thành viên ACTIVE tự chọn món; LEADER có thể chọn/bỏ chọn thay thành viên ACTIVE. Hóa đơn SETTLED bị khóa (409).
   * Chốt: chỉ LEADER, hóa đơn phải VERIFIED. Toàn bộ ghi split_details + debts + đổi SETTLED nằm trong 1 transaction.
   * Xem công nợ: thành viên ACTIVE của nhóm thấy công nợ của nhóm đó; hóa đơn cá nhân chỉ chủ sở hữu.
 Selection của người đã bị gỡ khỏi nhóm (không còn ACTIVE) bị bỏ qua: món đó coi như chưa ai chọn.
@@ -148,28 +148,47 @@ def _summary(db: Session, receipt: Receipt, user: User) -> SelectionSummary:
     )
 
 
-def _load_for_selection(db: Session, user: User, receipt_id: int, item_id: int) -> Receipt:
-    receipt, _ = _load_group_receipt(db, user, receipt_id, lock=True)
+def _load_for_selection(
+    db: Session, user: User, receipt_id: int, item_id: int, target_user_id: int | None
+) -> tuple[Receipt, int]:
+    receipt, member = _load_group_receipt(db, user, receipt_id, lock=True)
     state.require_not_settled(receipt)  # 409 RECEIPT_SETTLED
     item = db.scalar(select(ReceiptItem).where(ReceiptItem.id == item_id, ReceiptItem.receipt_id == receipt.id))
     if item is None:
         raise NotFound("Không tìm thấy dòng món")
-    return receipt
+    if target_user_id is None or target_user_id == user.id:
+        return receipt, user.id
+
+    require_leader(member)
+    target_is_active = db.scalar(
+        select(GroupMember.user_id).where(
+            GroupMember.group_id == receipt.group_id,
+            GroupMember.user_id == target_user_id,
+            GroupMember.status == "ACTIVE",
+        )
+    )
+    if target_is_active is None:
+        raise Forbidden("Chỉ có thể chia món cho thành viên đang hoạt động trong nhóm")
+    return receipt, target_user_id
 
 
-def select_item(db: Session, user: User, receipt_id: int, item_id: int) -> SelectionSummary:
-    """Chọn món cho CHÍNH MÌNH. Idempotent: chọn lại món đã chọn không lỗi."""
-    receipt = _load_for_selection(db, user, receipt_id, item_id)
-    if db.get(ItemSelection, (item_id, user.id)) is None:
-        db.add(ItemSelection(item_id=item_id, user_id=user.id))
+def select_item(
+    db: Session, user: User, receipt_id: int, item_id: int, target_user_id: int | None = None
+) -> SelectionSummary:
+    """Chọn món cho mình; LEADER có thể chọn thay thành viên ACTIVE. Idempotent."""
+    receipt, selected_user_id = _load_for_selection(db, user, receipt_id, item_id, target_user_id)
+    if db.get(ItemSelection, (item_id, selected_user_id)) is None:
+        db.add(ItemSelection(item_id=item_id, user_id=selected_user_id))
     db.commit()
     return _summary(db, receipt, user)
 
 
-def deselect_item(db: Session, user: User, receipt_id: int, item_id: int) -> SelectionSummary:
-    """Bỏ chọn món của CHÍNH MÌNH. Idempotent: bỏ chọn món chưa chọn không lỗi."""
-    receipt = _load_for_selection(db, user, receipt_id, item_id)
-    db.execute(delete(ItemSelection).where(ItemSelection.item_id == item_id, ItemSelection.user_id == user.id))
+def deselect_item(
+    db: Session, user: User, receipt_id: int, item_id: int, target_user_id: int | None = None
+) -> SelectionSummary:
+    """Bỏ chọn món của mình; LEADER có thể bỏ chọn thay thành viên ACTIVE. Idempotent."""
+    receipt, selected_user_id = _load_for_selection(db, user, receipt_id, item_id, target_user_id)
+    db.execute(delete(ItemSelection).where(ItemSelection.item_id == item_id, ItemSelection.user_id == selected_user_id))
     db.commit()
     return _summary(db, receipt, user)
 
