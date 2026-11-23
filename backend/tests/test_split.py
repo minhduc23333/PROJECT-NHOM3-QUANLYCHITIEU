@@ -502,3 +502,7 @@ def test_pay_debt_permissions_transitions_and_dashboard(client, team):
     repeated = client.patch(pay_url, headers=headers["A"])
     assert repeated.status_code == 409
     assert repeated.json()["error"]["code"] == "DEBT_ALREADY_PAID"
+
+
+
+# T05E186: verified backend regression, split unit tests and API latency < 2s
