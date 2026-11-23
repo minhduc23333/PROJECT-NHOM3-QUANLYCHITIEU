@@ -142,6 +142,8 @@ export function mountAuth(el, { mode, title, sub, body }) {
     countUp(page);
     tilt(page.querySelector(".auth-visual"));
     wireMobileSteps(page);
+    // Trang quên/đặt lại mật khẩu (mở từ liên kết email): điện thoại vào thẳng form, không qua màn giới thiệu
+    if (mode === "forgot") page.dataset.step = "form";
   }
 
   const prev = page.dataset.mode;

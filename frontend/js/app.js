@@ -10,6 +10,8 @@ import {
 } from "./router.js";
 import * as login from "./pages/login.js";
 import * as register from "./pages/register.js";
+import * as forgot from "./pages/forgot.js";
+import * as reset from "./pages/reset.js";
 import * as dashboard from "./pages/dashboard.js";
 import * as groups from "./pages/groups.js";
 import * as receipts from "./pages/receipts.js";
@@ -22,6 +24,8 @@ import * as uiDemo from "./pages/ui-demo.js";
 
 addRoute("/login", login.render, { isPublic: true });
 addRoute("/register", register.render, { isPublic: true });
+addRoute("/forgot-password", forgot.render, { isPublic: true });
+addRoute("/reset-password/:token", reset.render, { isPublic: true });
 addRoute("/", dashboard.render);
 addRoute("/groups", groups.render);
 addRoute("/groups/:id", groups.renderDetail);
