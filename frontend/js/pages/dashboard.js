@@ -208,6 +208,7 @@ export function render(el) {
         (a, b) => new Date(b.receipt_date ?? 0) - new Date(a.receipt_date ?? 0),
       );
       const hasSpend = monthly.some((m) => num(m.total) > 0);
+      const monthlyTotal = monthly.reduce((total, m) => total + num(m.total), 0);
       const catTotal = cats.reduce((t, c) => t + num(c.total), 0);
 
       box.innerHTML = `
@@ -223,6 +224,7 @@ export function render(el) {
         <div class="row g-3 mb-4">
           <div class="col-lg-7"><div class="card h-100"><div class="card-body">
             <h5 class="card-title">Chi tiêu của tôi, 6 tháng gần nhất</h5>
+            <p class="text-muted small mb-2">Tổng trong 6 tháng: ${formatVND(monthlyTotal)} · Tổng chi và danh mục tính mọi hóa đơn đã chốt.</p>
             ${hasSpend ? '<div class="dash-chart"><canvas id="chart-monthly"></canvas></div>'
                        : '<div class="dash-empty">Chưa có chi tiêu nào trong 6 tháng qua.<br>Biểu đồ sẽ hiện khi có hóa đơn được chốt.</div>'}
           </div></div></div>

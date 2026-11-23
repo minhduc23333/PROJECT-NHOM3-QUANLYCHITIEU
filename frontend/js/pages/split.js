@@ -317,6 +317,7 @@ export function render(el, params) {
     const isLeader = st.group?.my_role === "LEADER";
     const settled = r.status === "SETTLED";
     const canSelect = s.can_select && memberIds.includes(meId);
+    const canManageSelections = canSelect && isLeader;
     const fee = num(s.fee_total);
     const discount = num(s.discount_amount ?? r.discount_amount);
     const selectorsByItem = new Map(items.map((i) => [i.id, members.filter((m) => m.selected_item_ids.includes(i.id))]));
@@ -425,7 +426,11 @@ export function render(el, params) {
                 ${many ? `<label class="pk-switch"><input type="checkbox" id="pk-showall" ${ui.showAll ? "checked" : ""}> Hiện cả người chưa chọn</label>` : ""}
               </div>
               <div class="pk-legend mb-2" aria-label="Trạng thái chọn món">
-                ${canSelect ? '<span><span class="pill me on demo">✓ Tôi</span> chọn / bỏ chọn</span>' : ""}
+                ${canManageSelections
+                  ? '<span>Trưởng nhóm có thể chọn / bỏ chọn cho mọi thành viên</span>'
+                  : canSelect
+                    ? '<span><span class="pill me on demo">✓ Tôi</span> chọn / bỏ chọn</span>'
+                    : ""}
                 <span>Đã chọn</span><span>Chưa chọn</span>
               </div>
               <div class="pick-list">${shownItems.length ? "" : `<div class="text-muted text-center p-3 pick-row" style="display:block">${ui.filter === "free" ? "Món nào cũng đã có người chọn." : ui.filter === "mine" ? "Bạn chưa chọn món nào." : "Hóa đơn chưa có dòng món."}</div>`}${shownItems
@@ -442,9 +447,9 @@ export function render(el, params) {
                       if (!open && !on && !mine) return "";
                       const name = mine ? "Tôi" : m.full_name;
                       const ava = `<span class="p-ava" aria-hidden="true">${on ? "✓" : esc(initials(m.full_name))}</span>`;
-                      if (mine && canSelect)
-                        return `<label class="pill me ${on ? "on" : ""}" title="${on ? "Bỏ chọn" : "Chọn"} món này">
-                          <input type="checkbox" class="pill-input" data-item="${i.id}" ${on ? "checked" : ""} aria-label="Tôi đã dùng ${esc(i.item_name)}">${ava}<span>${esc(name)}</span></label>`;
+                      if ((mine && canSelect) || canManageSelections)
+                        return `<label class="pill ${mine ? "me" : ""} ${on ? "on" : ""}" title="${on ? "Bỏ chọn" : "Chọn"} món này">
+                          <input type="checkbox" class="pill-input" data-item="${i.id}" data-user="${m.user_id}" ${on ? "checked" : ""} aria-label="${mine ? "Tôi" : esc(m.full_name)} đã dùng ${esc(i.item_name)}">${ava}<span>${esc(name)}</span></label>`;
                       return `<span class="pill ${mine ? "me" : ""} ${on ? "on" : ""}" title="${esc(m.full_name)} ${on ? "đã chọn" : "chưa chọn"}">${ava}<span>${esc(name)}</span></span>`;
                     })
                     .join("");
@@ -540,13 +545,15 @@ export function render(el, params) {
     box.querySelectorAll("input[data-item]").forEach((cb) => {
       cb.onchange = async () => {
         const itemId = cb.dataset.item;
+        const userId = cb.dataset.user;
+        const targetQuery = userId === String(meId) ? "" : `?user_id=${encodeURIComponent(userId)}`;
         const scrollLeft = [...box.querySelectorAll(".mx-wrap")].map((wrap) => wrap.scrollLeft);
         const scrollTop = window.scrollY;
         box.querySelectorAll(`input[data-item="${itemId}"]`).forEach((x) => (x.disabled = true, x.classList.add("busy")));
         try {
           st.summary = cb.checked
-            ? await put(`/receipts/${id}/items/${itemId}/selection`)
-            : await del(`/receipts/${id}/items/${itemId}/selection`);
+            ? await put(`/receipts/${id}/items/${itemId}/selection${targetQuery}`)
+            : await del(`/receipts/${id}/items/${itemId}/selection${targetQuery}`);
           st.error = null;
         } catch (e) {
           toast.error(e);
