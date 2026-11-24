@@ -43,16 +43,6 @@ class Settings(BaseSettings):
     GEMINI_CALL_TIMEOUT_SEC: float = 150.0    # tối đa cho 1 lượt gọi model
     GEMINI_TOTAL_BUDGET_SEC: float = 280.0    # tối đa cho toàn bộ 1 lần đọc (gồm các lượt tự kiểm toán)
 
-    # Quên mật khẩu: liên kết đặt lại gửi qua email. Chưa có SMTP_HOST thì chỉ ghi liên kết vào log của backend (dev).
-    PUBLIC_BASE_URL: str = "http://localhost:8000"  # địa chỉ người dùng mở web (dùng để tạo liên kết trong email)
-    PASSWORD_RESET_EXPIRE_MINUTES: int = 30
-    SMTP_HOST: str = ""
-    SMTP_PORT: int = 587
-    SMTP_USER: str = ""
-    SMTP_PASSWORD: str = ""
-    SMTP_FROM: str = ""  # vd: "SmartSplit AI <no-reply@gmail.com>"; để trống thì dùng SMTP_USER
-    SMTP_STARTTLS: bool = True
-
     @property
     def cors_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]

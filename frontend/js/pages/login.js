@@ -52,7 +52,6 @@ export function render(el) {
         ${authField({ label: "Mật khẩu", name: "password", type: "password", icon: "lock", placeholder: "Mật khẩu của bạn", autocomplete: "current-password", toggle: true })}
         <div class="auth-row">
           <label class="auth-check"><input type="checkbox" name="remember" ${remembered ? "checked" : ""}> Ghi nhớ email</label>
-          <a class="auth-link" href="#/forgot-password" id="forgot-link">Quên mật khẩu?</a>
         </div>
         <button class="auth-submit" type="submit">Đăng nhập</button>
       </form>
@@ -68,11 +67,6 @@ export function render(el) {
 
   const form = body.querySelector("#login-form");
   wirePasswordFields(form);
-  // Đã nhập email thì mang sang trang quên mật khẩu cho đỡ gõ lại
-  body.querySelector("#forgot-link").addEventListener("click", () => {
-    const e = form.elements.email.value.trim();
-    if (e) sessionStorage.setItem("forgot_email", e);
-  });
   (remembered ? form.elements.password : form.elements.email).focus();
 
   body.querySelector("#fill-demo")?.addEventListener("click", () => {
