@@ -31,10 +31,13 @@ def compute_shares(
     item_totals: dict[int, Decimal],
     selectors: dict[int, list[int]],
     fee_total: Decimal,
+    discount_amount: Decimal = ZERO,
 ) -> dict[int, Share]:
     """item_totals: {item_id: line_total của TẤT CẢ món}; selectors: {item_id: [user_id,...]}.
 
     Chỉ trả về những người có chọn ít nhất 1 món. Món chưa ai chọn không được tính cho ai.
+    Thuế/phí cộng thêm và giảm giá/làm tròn trừ theo tỉ lệ phần món của từng người trên tổng tạm tính;
+    luôn đảm bảo item_amount >= 0 và fee_amount >= 0 để thỏa ràng buộc DB.
     Mỗi phần đã làm tròn xuống tới đồng (chưa dồn phần lẻ — xem `assign_remainder`).
     """
     base = sum(item_totals.values(), ZERO)
@@ -49,8 +52,12 @@ def compute_shares(
 
     shares: dict[int, Share] = {}
     for uid, amount in exact.items():
-        fee = Fraction(fee_total) * amount / Fraction(base) if base > 0 else Fraction(0)
-        shares[uid] = Share(Decimal(math.floor(amount)), Decimal(math.floor(fee)))
+        net_fee = (Fraction(fee_total) - Fraction(discount_amount)) * amount / Fraction(base) if base > 0 else Fraction(0)
+        if net_fee >= 0:
+            shares[uid] = Share(Decimal(math.floor(amount)), Decimal(math.floor(net_fee)))
+        else:
+            net_item = max(Fraction(0), amount + net_fee)
+            shares[uid] = Share(Decimal(math.floor(net_item)), ZERO)
     return shares
 
 

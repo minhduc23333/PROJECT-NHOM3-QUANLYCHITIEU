@@ -1,19 +1,28 @@
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings  # noqa: F401  (test monkeypatch service.settings.UPLOAD_DIR)
 from app.core.deps import get_group_membership
 from app.core.errors import Conflict, Forbidden, NotFound, Unprocessable
-from app.models import GroupMember, Receipt, ReceiptItem, User
+from app.models import (
+    Debt,
+    GroupMember,
+    ItemSelection,
+    Receipt,
+    ReceiptItem,
+    SplitDetail,
+    User,
+)
 from app.modules.receipts import state, uploads
 from app.modules.receipts.schemas import (
     ItemCreate,
     ItemOut,
     ItemUpdate,
     ReceiptDetail,
+    ReceiptOut,
     ReceiptUpdate,
     VerifyIn,
 )
@@ -25,11 +34,17 @@ from app.modules.receipts.schemas import (
 #   - SETTLED: khóa mọi thao tác sửa (409, code RECEIPT_SETTLED).
 # Upload ảnh -> tạo DRAFT (ocr_status=PENDING) -> OCR (module ocr) điền dữ liệu.
 
-def list_group_receipts(db: Session, user: User, group_id: int) -> list[Receipt]:
-    get_group_membership(db, group_id, user.id)  # 404 / 403
-    return list(
+def list_group_receipts(db: Session, user: User, group_id: int) -> list[ReceiptOut]:
+    _, member = get_group_membership(db, group_id, user.id)  # 404 / 403
+    rows = list(
         db.scalars(select(Receipt).where(Receipt.group_id == group_id).order_by(Receipt.created_at.desc(), Receipt.id.desc()))
     )
+    return [
+        ReceiptOut.model_validate(r).model_copy(
+            update={"can_delete": _is_uploader_or_leader(r, member)}
+        )
+        for r in rows
+    ]
 
 
 ZERO = Decimal(0)
@@ -104,6 +119,7 @@ def _detail(db: Session, receipt: Receipt, member: GroupMember | None) -> Receip
             "can_settle": receipt.status == state.VERIFIED and _is_uploader_or_leader(receipt, member),
             "can_edit_receipt": editable and _is_uploader(receipt, member),
             "can_edit_items": editable and _is_uploader_or_leader(receipt, member),
+            "can_delete": _is_uploader_or_leader(receipt, member),
         }
     )
 
@@ -114,11 +130,29 @@ def get_receipt(db: Session, user: User, receipt_id: int) -> ReceiptDetail:
     return _detail(db, receipt, member)
 
 
+def delete_receipt(db: Session, user: User, receipt_id: int) -> None:
+    """Xóa hóa đơn và toàn bộ dữ liệu chia tiền liên quan; chỉ người tải hoặc Leader."""
+    receipt, member = _load(db, user, receipt_id, lock=True)
+    if not _is_uploader_or_leader(receipt, member):
+        raise Forbidden("Chỉ người tải hóa đơn hoặc Leader mới được xoá hóa đơn")
+
+    item_ids = select(ReceiptItem.id).where(ReceiptItem.receipt_id == receipt.id)
+    db.execute(delete(ItemSelection).where(ItemSelection.item_id.in_(item_ids)))
+    db.execute(delete(Debt).where(Debt.receipt_id == receipt.id))
+    db.execute(delete(SplitDetail).where(SplitDetail.receipt_id == receipt.id))
+    db.execute(delete(ReceiptItem).where(ReceiptItem.receipt_id == receipt.id))
+    db.delete(receipt)
+    db.commit()
+
+    image_path = uploads.resolve_image_path(receipt.image_path)
+    image_path.unlink(missing_ok=True)
+
+
 def get_receipt_image(db: Session, user: User, receipt_id: int) -> Path:
     """Đường dẫn ảnh gốc của hóa đơn (T05E176: xem ảnh cạnh biểu mẫu kiểm tra).
     Cùng quyền với xem hóa đơn: thành viên nhóm, hoặc chủ hóa đơn cá nhân."""
     receipt, _ = _load(db, user, receipt_id)
-    path = Path(receipt.image_path) if receipt.image_path else None
+    path = uploads.resolve_image_path(receipt.image_path) if receipt.image_path else None
     if path is None or not path.is_file():
         raise NotFound("Không tìm thấy ảnh hóa đơn")
     return path
@@ -244,12 +278,20 @@ def verify_receipt(db: Session, user: User, receipt_id: int, data: VerifyIn) -> 
     if receipt.total_amount is None:
         errors.append({"field": "total_amount", "message": "Chưa có tổng tiền (total_amount)"})
     elif receipt.subtotal is not None:
-        expected_total = receipt.subtotal + (receipt.tax_amount or ZERO) + (receipt.service_fee or ZERO)
-        if receipt.total_amount != expected_total:
+        discount = receipt.discount_amount or ZERO
+        expected_total = receipt.subtotal + (receipt.tax_amount or ZERO) + (receipt.service_fee or ZERO) - discount
+        if expected_total < ZERO:
+            errors.append(
+                {
+                    "field": "discount_amount",
+                    "message": f"Giảm giá / làm tròn ({discount}) không được lớn hơn tạm tính + thuế + phí",
+                }
+            )
+        elif receipt.total_amount != expected_total:
             errors.append(
                 {
                     "field": "total_amount",
-                    "message": f"total_amount ({receipt.total_amount}) ≠ subtotal + thuế + phí dịch vụ ({expected_total})",
+                    "message": f"total_amount ({receipt.total_amount}) ≠ subtotal + thuế + phí - giảm giá ({expected_total})",
                 }
             )
 

@@ -134,6 +134,31 @@ def test_select_is_idempotent_and_only_for_self(client, team):
     assert s["my_selected_item_ids"] == [i]  # B không thể bỏ chọn hộ A
 
 
+def test_leader_can_select_for_other_members_but_members_cannot(client, team):
+    rid, (item_id,) = make_receipt(client, team, [("Món chung", 100000, 1)])
+    target_id = team["uid"]["B"]
+    url = f"/api/receipts/{rid}/items/{item_id}/selection"
+
+    selected = client.put(f"{url}?user_id={target_id}", headers=team["h"]["L"])
+    assert selected.status_code == 200, selected.text
+    member_selections = {m["user_id"]: m["selected_item_ids"] for m in selected.json()["members"]}
+    assert member_selections[target_id] == [item_id]
+
+    denied = client.put(f"{url}?user_id={target_id}", headers=team["h"]["A"])
+    assert denied.status_code == 403
+    outside_member = client.put(f"{url}?user_id={team['uid']['X']}", headers=team["h"]["L"])
+    assert outside_member.status_code == 403
+
+    removed = client.delete(f"{url}?user_id={target_id}", headers=team["h"]["L"])
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["unselected_items"][0]["id"] == item_id
+    with SessionLocal() as db:
+        db.scalar(select(GroupMember).where(GroupMember.user_id == target_id)).status = "REMOVED"
+        db.commit()
+    inactive_member = client.put(f"{url}?user_id={target_id}", headers=team["h"]["L"])
+    assert inactive_member.status_code == 403
+
+
 def test_selection_permissions_and_errors(client, team):
     rid, (i,) = make_receipt(client, team, [("A", 100000, 1)])
     url = f"/api/receipts/{rid}/items/{i}/selection"
@@ -384,7 +409,96 @@ def test_personal_receipt_debts_empty_and_private(client, team):
     assert client.get(f"/api/receipts/{r['id']}/debts", headers=team["h"]["L"]).status_code == 403
 
 
+def test_discount_amount_verify_and_proportional_split(client, team):
+    """Hóa đơn Bách Hóa Xanh: tổng món 242.642đ, giảm/làm tròn 642đ -> thực trả 242.000đ."""
+    H = team["h"]["L"]
+    rid = client.post(
+        f"/api/groups/{team['gid']}/receipts", headers=H, files={"file": ("a.jpg", JPG, "image/jpeg")}
+    ).json()["id"]
+    a_item = client.post(f"/api/receipts/{rid}/items", headers=H, json={"item_name": "Hạt é", "unit_price": "17000"}).json()["id"]
+    b_item = client.post(f"/api/receipts/{rid}/items", headers=H, json={"item_name": "Các món khác", "unit_price": "225642"}).json()["id"]
+    r = client.patch(
+        f"/api/receipts/{rid}",
+        headers=H,
+        json={"subtotal": "242642", "discount_amount": "642", "total_amount": "242000"},
+    )
+    assert r.status_code == 200 and D(r.json()["discount_amount"]) == 642
+    assert client.post(f"/api/receipts/{rid}/verify", headers=H, json={"payer_id": team["uid"]["L"]}).status_code == 200
+
+    pick(client, team, "A", rid, a_item)
+    pick(client, team, "L", rid, b_item)
+    body = finalize(client, team, rid).json()
+    assert body["status"] == "SETTLED" and D(body["total_amount"]) == 242000
+    assert sum(D(s["final_amount"]) for s in body["splits"]) == 242000
+    assert all(D(s["item_amount"]) >= 0 and D(s["fee_amount"]) >= 0 for s in body["splits"])
+    by = {s["user_id"]: D(s["final_amount"]) for s in body["splits"]}
+    assert by[team["uid"]["A"]] == 16955 and by[team["uid"]["L"]] == 225045
+
+
 def test_dashboard_reflects_new_debts(client, team, settled):
     s = client.get("/api/dashboard/summary", headers=team["h"]["B"]).json()
     assert D(s["i_owe"]) == 70000                       # 40k (HĐ1) + 30k (HĐ2)
     assert D(client.get("/api/dashboard/summary", headers=team["h"]["L"]).json()["owed_to_me"]) == 100000
+
+
+def test_pay_debt_permissions_transitions_and_dashboard(client, team):
+    headers = team["h"]
+    member = register(client, "m@x.vn", "Người M")
+    assert client.post(
+        f"/api/groups/{team['gid']}/members", json={"email": "m@x.vn"}, headers=headers["L"]
+    ).status_code == 201
+
+    rid, (item,) = make_receipt(client, team, [("Bữa tối", 100000, 1)], payer="A", verify=False)
+    assert client.patch(
+        f"/api/receipts/{rid}", headers=headers["L"], json={"merchant_name": "Bữa tối"}
+    ).status_code == 200
+    assert client.post(
+        f"/api/receipts/{rid}/verify", headers=headers["L"], json={"payer_id": team["uid"]["A"]}
+    ).status_code == 200
+    pick(client, team, "B", rid, item)
+    pick(client, team, "L", rid, item)
+    split = finalize(client, team, rid).json()
+    debts = {d["debtor_id"]: d for d in split["debts"]}
+    b_debt = debts[team["uid"]["B"]]
+    leader_debt = debts[team["uid"]["L"]]
+    pay_url = f"/api/debts/{b_debt['id']}/pay"
+
+    assert client.patch(pay_url).status_code == 401
+    assert client.patch("/api/debts/999999/pay", headers=headers["L"]).status_code == 404
+    assert client.patch(pay_url, headers=headers["B"]).status_code == 403
+    assert client.patch(pay_url, headers=member).status_code == 403
+    assert client.patch(pay_url, headers=headers["X"]).status_code == 403
+
+    before = client.get("/api/dashboard/summary", headers=headers["B"]).json()
+    assert D(before["i_owe"]) == 50000
+    assert D(client.get("/api/dashboard/summary", headers=headers["A"]).json()["owed_to_me"]) == 100000
+
+    # Chủ nợ có thể xác nhận khoản B nợ.
+    paid = client.patch(pay_url, headers=headers["A"])
+    assert paid.status_code == 200, paid.text
+    body = paid.json()
+    assert {
+        key: body[key]
+        for key in ("debtor_name", "creditor_name", "merchant_name", "group_id", "amount", "status")
+    } == {
+        "debtor_name": "Người B",
+        "creditor_name": "Người A",
+        "merchant_name": "Bữa tối",
+        "group_id": team["gid"],
+        "amount": "50000.00",
+        "status": "PAID",
+    }
+
+    after = client.get("/api/dashboard/summary", headers=headers["B"]).json()
+    assert D(after["i_owe"]) == 0
+    assert D(client.get("/api/dashboard/summary", headers=headers["A"]).json()["owed_to_me"]) == 50000
+
+    # LEADER ACTIVE có thể xác nhận khoản nợ còn lại dù không phải chủ nợ.
+    leader_paid = client.patch(f"/api/debts/{leader_debt['id']}/pay", headers=headers["L"])
+    assert leader_paid.status_code == 200, leader_paid.text
+    assert leader_paid.json()["status"] == "PAID"
+    assert D(client.get("/api/dashboard/summary", headers=headers["A"]).json()["owed_to_me"]) == 0
+
+    repeated = client.patch(pay_url, headers=headers["A"])
+    assert repeated.status_code == 409
+    assert repeated.json()["error"]["code"] == "DEBT_ALREADY_PAID"

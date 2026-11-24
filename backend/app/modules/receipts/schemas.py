@@ -2,7 +2,9 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+
+from app.modules.receipts import categories
 
 
 class ReceiptOut(BaseModel):
@@ -19,6 +21,7 @@ class ReceiptOut(BaseModel):
     status: str
     ocr_status: str | None = None
     created_at: datetime | None = None
+    can_delete: bool = False
 
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
@@ -66,14 +69,28 @@ class ReceiptUpdate(BaseModel):
     subtotal: Money | None = None
     tax_amount: Money | None = None
     service_fee: Money | None = None
+    discount_amount: Money | None = None
     total_amount: Money | None = None
-    category: Annotated[str, StringConstraints(strip_whitespace=True, max_length=50)] | None = None
+    category: Annotated[str, StringConstraints(strip_whitespace=True, max_length=50)] | None = Field(
+        default=None,
+        description="Một trong: Ăn uống, Di chuyển, Mua sắm, Khác (bỏ qua hoa/thường và dấu). Để trống = Khác.",
+    )
+
+    @field_validator("category")
+    @classmethod
+    def _check_category(cls, v: str | None) -> str | None:
+        return None if v is None else categories.normalize(v)
+
+
+class CategorySuggestion(BaseModel):
+    category: str  # gợi ý theo quy tắc từ khóa; không khớp -> "Khác"
 
 
 class ReceiptDetail(ReceiptOut):
     subtotal: Decimal | None = None
     tax_amount: Decimal | None = None
     service_fee: Decimal | None = None
+    discount_amount: Decimal | None = None
     items: list[ItemOut] = []
     items_total: Decimal = Decimal(0)       # SUM(line_total) thực tế, để UI so với subtotal
     can_edit_receipt: bool = False            # người tải lên, trừ khi SETTLED

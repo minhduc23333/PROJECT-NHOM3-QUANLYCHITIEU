@@ -1,11 +1,14 @@
 """Engine OCR đóng gói độc lập (task T05E16E): ảnh -> text/box thô.
 
-Không import FastAPI/SQLAlchemy. Hàm chính: `run_ocr(image_path)`.
+Không import FastAPI/SQLAlchemy. Hàm chính: `run_ocr(image_path)` (một lượt) và `recognize(img, psm)`
+(ảnh đã tiền xử lý -> OcrResult). Việc thử nhiều biến thể ảnh + chọn kết quả tốt nhất nằm ở `pipeline.py`.
 Cấu hình trong .env: OCR_ENGINE (tesseract | easyocr), OCR_LANG, OCR_TIMEOUT_SEC, TESSERACT_CMD.
 """
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
@@ -13,7 +16,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from app.core.config import settings
-from app.modules.ocr.preprocess import load_image, preprocess
+from app.modules.ocr.preprocess import iter_variants, load_image
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +38,7 @@ class OcrBox:
     w: int
     h: int
     conf: float  # 0..100, -1 nếu engine không báo
+    line_id: tuple[int, int, int] | None = None  # (block, paragraph, line) do Tesseract báo; None nếu engine không có
 
 
 @dataclass
@@ -46,11 +50,16 @@ class OcrResult:
     def text(self) -> str:
         return "\n".join(self.lines)
 
+    @property
+    def mean_conf(self) -> float:
+        """Độ tin cậy trung bình 0..100 (trọng số theo độ dài từ); 0 nếu engine không báo / không có chữ."""
+        good = [b for b in self.boxes if b.conf >= 0 and len(b.text) >= 2]
+        total = sum(len(b.text) for b in good)
+        return sum(b.conf * len(b.text) for b in good) / total if total else 0.0
 
-def group_into_lines(boxes: list[OcrBox]) -> list[str]:
-    """Gom các box thành dòng: cùng dòng nếu tâm dọc lệch < nửa chiều cao dòng."""
-    if not boxes:
-        return []
+
+def _group_by_geometry(boxes: list[OcrBox]) -> list[list[OcrBox]]:
+    """Gom box thành dòng theo toạ độ: cùng dòng nếu tâm dọc lệch < 0.6 chiều cao dòng (ảnh đã thẳng)."""
     ordered = sorted(boxes, key=lambda b: (b.y + b.h / 2, b.x))
     rows: list[list[OcrBox]] = []
     for b in ordered:
@@ -63,7 +72,72 @@ def group_into_lines(boxes: list[OcrBox]) -> list[str]:
                 last.append(b)
                 continue
         rows.append([b])
+    return rows
+
+
+def _row_geom(row: list[OcrBox]) -> tuple[float, float, float, float]:
+    """(tâm dọc, chiều cao trung vị, x trái, x phải) của một dòng."""
+    hs = sorted(b.h for b in row)
+    cy = sum(b.y + b.h / 2 for b in row) / len(row)
+    return cy, hs[len(hs) // 2], min(b.x for b in row), max(b.x + b.w for b in row)
+
+
+def _merge_same_row(rows: list[list[OcrBox]]) -> list[list[OcrBox]]:
+    """Tesseract đôi khi tách 'Tạm tính:' và '228.000' (cách nhau một khoảng trắng rộng) thành 2 dòng
+    cùng baseline. Gộp lại nếu cùng tâm dọc và không chồng nhau theo chiều ngang."""
+    rows = sorted(rows, key=lambda r: _row_geom(r)[0])
+    merged: list[list[OcrBox]] = []
+    for row in rows:
+        if merged:
+            cy1, h1, l1, r1 = _row_geom(merged[-1])
+            cy2, h2, l2, r2 = _row_geom(row)
+            if abs(cy1 - cy2) <= 0.45 * min(h1, h2) and (l2 > r1 or l1 > r2):
+                merged[-1] = merged[-1] + row
+                continue
+        merged.append(row)
+    return merged
+
+
+def group_into_lines(boxes: list[OcrBox]) -> list[str]:
+    """Box -> các dòng text, từ trên xuống.
+
+    Có line_id (Tesseract) thì dùng cấu trúc dòng của chính nó — nó bám theo baseline nên đúng cả khi
+    chữ còn hơi nghiêng; gom bằng toạ độ như trước dễ xé 'nhãn' và 'số tiền' của cùng một dòng.
+    Không có line_id (EasyOCR) thì gom theo toạ độ.
+    """
+    if not boxes:
+        return []
+    if all(b.line_id is not None for b in boxes):
+        by_id: dict[tuple[int, int, int], list[OcrBox]] = {}
+        for b in boxes:
+            by_id.setdefault(b.line_id, []).append(b)
+        rows = _merge_same_row(list(by_id.values()))
+    else:
+        rows = _group_by_geometry(boxes)
     return [" ".join(x.text for x in sorted(r, key=lambda b: b.x)) for r in rows]
+
+
+_WIN_TESSERACT_PATHS = (
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    r"D:\Tesseract-OCR\tesseract.exe",
+    r"D:\Program Files\Tesseract-OCR\tesseract.exe",
+)
+
+
+def _configure_tesseract(pytesseract) -> None:
+    """Trỏ pytesseract tới tesseract.exe. Ưu tiên TESSERACT_CMD (bỏ ngoặc kép/khoảng trắng thừa hay dính khi
+    copy đường dẫn Windows vào .env); không đặt thì để PATH quyết định, PATH không có thì dò các thư mục cài mặc định."""
+    cmd = (settings.TESSERACT_CMD or "").strip().strip('"').strip("'").strip()
+    if cmd:
+        pytesseract.pytesseract.tesseract_cmd = cmd
+        return
+    if shutil.which(pytesseract.pytesseract.tesseract_cmd):
+        return
+    for cand in _WIN_TESSERACT_PATHS:
+        if os.path.isfile(cand):
+            pytesseract.pytesseract.tesseract_cmd = cand
+            return
 
 
 _tess_langs: str | None = None
@@ -82,6 +156,8 @@ def _resolve_tess_lang(pytesseract) -> str:
         installed = set(pytesseract.get_languages(config=""))
     except pytesseract.TesseractNotFoundError:  # để image_to_data báo lỗi Tesseract rõ ràng hơn
         return settings.OCR_LANG
+    except Exception as exc:  # noqa: BLE001  TESSDATA_PREFIX sai... -> OcrError (API trả FAILED) thay vì 500
+        raise OcrError(f"Không đọc được danh sách ngôn ngữ Tesseract: {exc}") from exc
     usable = [x for x in wanted if x in installed]
     if not usable:
         raise OcrError(f"Tesseract chưa cài ngôn ngữ nào trong OCR_LANG={settings.OCR_LANG}")
@@ -93,34 +169,65 @@ def _resolve_tess_lang(pytesseract) -> str:
     return _tess_langs
 
 
-def _tesseract(img: np.ndarray) -> list[OcrBox]:
+def _tesseract(img: np.ndarray, psm: int = 6) -> list[OcrBox]:
     try:
         import pytesseract
     except ImportError as exc:  # pragma: no cover
         raise OcrError("Chưa cài pytesseract (pip install pytesseract)") from exc
-    if settings.TESSERACT_CMD:
-        pytesseract.pytesseract.tesseract_cmd = settings.TESSERACT_CMD
+    _configure_tesseract(pytesseract)
     try:
         d = pytesseract.image_to_data(
-            img, lang=_resolve_tess_lang(pytesseract), config="--psm 6", output_type=pytesseract.Output.DICT
+            img,
+            lang=_resolve_tess_lang(pytesseract),
+            # oem 1 = LSTM; dpi 300 để Tesseract khỏi đoán (ảnh từ mảng numpy không có DPI)
+            config=f"--oem 1 --psm {psm} --dpi 300",
+            output_type=pytesseract.Output.DICT,
+            timeout=min(settings.OCR_TIMEOUT_SEC, 12.0),   # tối đa 12s/lượt, kill ngay tiến trình treo
         )
     except pytesseract.TesseractNotFoundError as exc:
-        raise OcrError("Không tìm thấy Tesseract; đặt TESSERACT_CMD trong .env") from exc
+        raise OcrError("Không tìm thấy Tesseract; cài Tesseract rồi đặt TESSERACT_CMD trong backend/.env") from exc
     except pytesseract.TesseractError as exc:
         raise OcrError(f"Tesseract lỗi: {exc}") from exc
+    except RuntimeError as exc:   # pytesseract báo timeout bằng RuntimeError('Tesseract process timeout')
+        raise OcrTimeout(f"Tesseract quá {settings.OCR_TIMEOUT_SEC:.0f}s") from exc
+    except (OSError, ValueError) as exc:   # file tạm bị khóa (Windows), ảnh không hợp lệ...
+        raise OcrError(f"Không chạy được Tesseract: {exc}") from exc
     boxes = []
     for i, txt in enumerate(d["text"]):
         txt = (txt or "").strip()
         if not txt:
             continue
-        boxes.append(OcrBox(txt, d["left"][i], d["top"][i], d["width"][i], d["height"][i], float(d["conf"][i])))
+        boxes.append(
+            OcrBox(
+                txt, d["left"][i], d["top"][i], d["width"][i], d["height"][i], float(d["conf"][i]),
+                line_id=(d["block_num"][i], d["par_num"][i], d["line_num"][i]),
+            )
+        )
     return boxes
+
+
+def detect_rotation(img: np.ndarray) -> int | None:
+    """Số lần xoay 90° NGƯỢC chiều kim đồng hồ (1..3) để chữ thẳng đứng theo Tesseract OSD; 0 = đã thẳng;
+    None nếu không xác định được (ảnh quá ít chữ, thiếu osd.traineddata, engine khác Tesseract...)."""
+    if settings.OCR_ENGINE not in ("tesseract", "auto", "gemini"):
+        return None
+    try:
+        import pytesseract
+
+        _configure_tesseract(pytesseract)
+        osd = pytesseract.image_to_osd(img, config="--psm 0", output_type=pytesseract.Output.DICT, timeout=5)
+        if float(osd.get("orientation_conf", 0)) < 1.0:
+            return None
+        return (4 - int(osd.get("rotate", 0)) // 90) % 4    # OSD báo độ xoay THUẬN chiều kim đồng hồ cần để sửa
+    except Exception as exc:  # noqa: BLE001  OSD hay lỗi với hóa đơn ít chữ; chỉ là gợi ý nên nuốt lỗi
+        log.debug("OSD không xác định được hướng: %s", exc)
+        return None
 
 
 _easy_reader = None
 
 
-def _easyocr(img: np.ndarray) -> list[OcrBox]:
+def _easyocr(img: np.ndarray, psm: int = 6) -> list[OcrBox]:  # noqa: ARG001  (psm chỉ dùng cho Tesseract)
     global _easy_reader
     try:
         import easyocr
@@ -136,32 +243,47 @@ def _easyocr(img: np.ndarray) -> list[OcrBox]:
     return [b for b in boxes if b.text]
 
 
-_ENGINES = {"tesseract": _tesseract, "easyocr": _easyocr}
+_ENGINES = {
+    "tesseract": _tesseract,
+    "easyocr": _easyocr,
+    "auto": _tesseract,
+    "gemini": _tesseract,
+}
 
 
-def _recognize(path: str) -> OcrResult:
-    img = preprocess(load_image(path))
+def recognize(img: np.ndarray, psm: int = 6) -> OcrResult:
+    """Ảnh ĐÃ tiền xử lý -> OcrResult (box + dòng). Chạy đồng bộ, không timeout."""
     try:
         fn = _ENGINES[settings.OCR_ENGINE]
     except KeyError as exc:
         raise OcrError(f"OCR_ENGINE không hợp lệ: {settings.OCR_ENGINE}") from exc
-    boxes = fn(img)
+    boxes = fn(img, psm=psm)
     return OcrResult(boxes=boxes, lines=group_into_lines(boxes))
 
 
-_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ocr")
+def _recognize(path: str) -> OcrResult:
+    """Một lượt đơn giản: ảnh -> biến thể tiền xử lý đầu tiên -> OCR."""
+    _, img = next(iter_variants(load_image(path)))
+    return recognize(img)
 
 
-def run_ocr(image_path: str, timeout: float | None = None) -> OcrResult:
-    """Chạy OCR có timeout. Ném OcrTimeout / OcrError / ImageError khi thất bại.
+_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ocr")
 
-    Lưu ý: thread quá hạn không bị kill (Python không cho); ta bỏ kết quả của nó.
-    """
+
+def _run_with_timeout(fn, arg, timeout: float | None):
+    """Chạy fn(arg) trong thread riêng với timeout. Thread quá hạn không bị kill (Python không cho);
+    ta chỉ bỏ kết quả của nó."""
     timeout = settings.OCR_TIMEOUT_SEC if timeout is None else timeout
-    future = _pool.submit(_recognize, image_path)
+    future = _pool.submit(fn, arg)
     try:
         return future.result(timeout=timeout)
     except FutureTimeout as exc:
         future.cancel()
-        log.warning("OCR timeout sau %.0fs: %s", timeout, image_path)
+        log.warning("OCR timeout sau %.0fs: %s", timeout, arg)
         raise OcrTimeout(f"OCR quá {timeout:.0f}s") from exc
+
+
+def run_ocr(image_path: str, timeout: float | None = None) -> OcrResult:
+    """Một lượt OCR có timeout. Ném OcrTimeout / OcrError / ImageError khi thất bại.
+    (Luồng chính dùng pipeline.read_receipt: nhiều lượt + chọn kết quả tốt nhất.)"""
+    return _run_with_timeout(_recognize, image_path, timeout)

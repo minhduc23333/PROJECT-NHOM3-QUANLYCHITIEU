@@ -35,13 +35,13 @@ DEFAULT_CATEGORY = "Khác"
 
 def _last_months(n: int, today: date | None = None) -> list[str]:
     today = today or date.today()
-    y, m = today.year, today.month
+    year, month = today.year, today.month
     out = []
     for _ in range(n):
-        out.append(f"{y:04d}-{m:02d}")
-        m -= 1
-        if m == 0:
-            y, m = y - 1, 12
+        out.append(f"{year:04d}-{month:02d}")
+        month -= 1
+        if month == 0:
+            year, month = year - 1, 12
     return list(reversed(out))
 
 
@@ -75,13 +75,13 @@ def summary(db: Session, user: User) -> DashboardSummary:
 
     personal_spent = sum((row[3] for row in mine), ZERO)
 
-    months = _last_months(MONTHS)
     by_month: dict[str, Decimal] = defaultdict(lambda: ZERO)
     by_cat: dict[str, Decimal] = defaultdict(lambda: ZERO)
     for _, when, category, amount in mine:
         if when is not None:
             by_month[f"{when.year:04d}-{when.month:02d}"] += amount
         by_cat[(category or "").strip() or DEFAULT_CATEGORY] += amount
+    months = _last_months(MONTHS)
     my_amount = {row[0]: row[3] for row in mine}
 
     recent_rows = db.execute(

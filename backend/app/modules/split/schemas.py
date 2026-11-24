@@ -27,6 +27,7 @@ class SelectionSummary(BaseModel):
     can_select: bool = Field(description="False khi hóa đơn đã SETTLED")
     items_total: Decimal = Field(description="Tổng tiền các dòng món")
     fee_total: Decimal = Field(description="Thuế + phí dịch vụ")
+    discount_amount: Decimal = Field(default=Decimal(0), description="Giảm giá / làm tròn")
     my_selected_item_ids: list[int] = []
     members: list[MemberShare] = Field(description="Mọi thành viên ACTIVE của nhóm, kể cả người chưa chọn món")
     unselected_items: list[UnselectedItem] = Field(description="Món chưa có thành viên ACTIVE nào chọn")

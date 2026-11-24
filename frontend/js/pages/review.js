@@ -6,7 +6,9 @@ import { getToken, getUser } from "../auth.js";
 import { formatDateTime, formatNumber, formatVND, parseVND } from "../format.js";
 import { confirmDialog, emptyHTML, esc, toast, withBusy } from "../ui.js";
 
-const CATEGORIES = ["Ăn uống", "Đi lại", "Mua sắm", "Nhà ở", "Giải trí", "Sức khỏe", "Khác"];
+// Phải khớp backend (app/modules/receipts/categories.py). Mặc định "Khác".
+const CATEGORIES = ["Ăn uống", "Di chuyển", "Mua sắm", "Khác"];
+const DEFAULT_CATEGORY = "Khác";
 const STATUS = {
   DRAFT: { text: "Nháp", cls: "rv-st-draft" },
   VERIFIED: { text: "Đã xác nhận", cls: "rv-st-verified" },
@@ -14,7 +16,7 @@ const STATUS = {
 };
 
 /** Kiểm tra số liệu, tách riêng để dễ test. Trả về danh sách cảnh báo (rỗng = khớp hết). */
-export function checkTotals({ itemsSum, subtotal, tax, fee, total, itemCount }) {
+export function checkTotals({ itemsSum, subtotal, tax, fee, discount = 0, total, itemCount }) {
   const out = [];
   if (!itemCount) out.push({ field: "items", text: "Hóa đơn chưa có dòng món nào." });
   if (subtotal == null) out.push({ field: "subtotal", text: "Chưa có tạm tính." });
@@ -25,12 +27,20 @@ export function checkTotals({ itemsSum, subtotal, tax, fee, total, itemCount }) 
       fix: "sub",
     });
   if (total == null) out.push({ field: "total_amount", text: "Chưa có tổng tiền." });
-  else if (subtotal != null && subtotal + tax + fee !== total)
-    out.push({
-      field: "total_amount",
-      text: `Tạm tính + VAT + phí = ${formatVND(subtotal + tax + fee)} khác tổng tiền ${formatVND(total)} (lệch ${formatVND(Math.abs(subtotal + tax + fee - total))}).`,
-      fix: "total",
-    });
+  else if (subtotal != null) {
+    const expected = subtotal + tax + fee - discount;
+    if (expected < 0)
+      out.push({
+        field: "discount_amount",
+        text: `Giảm giá / làm tròn (${formatVND(discount)}) lớn hơn tạm tính + VAT + phí (${formatVND(subtotal + tax + fee)}).`,
+      });
+    else if (expected !== total)
+      out.push({
+        field: "total_amount",
+        text: `Tạm tính + VAT + phí${discount ? " − giảm giá" : ""} = ${formatVND(expected)} khác tổng tiền ${formatVND(total)} (lệch ${formatVND(Math.abs(expected - total))}).`,
+        fix: "total",
+      });
+  }
   return out;
 }
 
@@ -45,6 +55,15 @@ const CSS = `
 .page-review .btn-primary:disabled { background:var(--grad); color:var(--ink); opacity:.55; }
 .page-review .form-control:focus, .page-review .form-select:focus { border-color:#b6a1d4; box-shadow:0 0 0 .2rem rgba(182,161,212,.35); }
 .page-review .section-title { font-size:1rem; font-weight:700; margin:0 0 10px; }
+.page-review .rv-close {
+  width:38px; height:38px; flex:none; display:grid; place-items:center; border:1px solid var(--line); border-radius:12px;
+  background:#fff; color:var(--muted); text-decoration:none; transition:background .18s ease, color .18s ease, transform .18s ease, box-shadow .18s ease;
+}
+.page-review .rv-close svg { width:19px; height:19px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; }
+.page-review .rv-close:hover, .page-review .rv-close:focus-visible {
+  background:var(--mist); color:var(--ink); transform:rotate(90deg); box-shadow:0 3px 10px rgba(70,64,82,.12);
+}
+.page-review .rv-close:focus-visible { outline:2px solid #8a70b5; outline-offset:2px; }
 .rv-badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:.78rem; font-weight:600; }
 .rv-st-draft { background:#ece8f1; color:#5b5568; } .rv-st-verified { background:#e9ddf7; color:#5a4790; } .rv-st-settled { background:#fce4ec; color:#a0516e; }
 .img-panel { position:sticky; top:76px; }
@@ -63,7 +82,23 @@ const CSS = `
 .items-table td { vertical-align:middle; } .items-table input { min-width:0; }
 .money-grid .form-label { font-size:.85rem; color:var(--muted); margin-bottom:4px; }
 .money-grid .input-group-text { background:#faf8fd; }
-.money-grid .btn-fix { font-size:.75rem; padding:2px 8px; border-radius:8px; }
+.money-grid > [class*="col"] { min-width:0; }
+@media (min-width: 768px) {
+  .money-grid > [class*="col"] { flex:0 0 20%; max-width:20%; }
+  .money-grid .rv-money-fix { width:100%; padding-inline:6px; text-align:center; overflow:hidden; }
+  .money-grid .rv-money-fix span { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+}
+.money-grid .rv-money-fix {
+  display:flex; align-items:center; justify-content:center; gap:6px; width:max-content; max-width:100%;
+  margin:7px auto 0; padding:5px 12px; border:1px solid #d9c9ed; border-radius:999px;
+  background:#f7f2fc; color:#5f4788; font-size:.8rem; font-weight:600; text-decoration:none;
+  transition:background .18s ease, border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+.money-grid .rv-money-fix svg { width:15px; height:15px; flex:none; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.money-grid .rv-money-fix:hover, .money-grid .rv-money-fix:focus-visible {
+  background:#eee5f8; border-color:#bca5dc; color:#49366c; box-shadow:0 3px 10px rgba(95,71,136,.15); transform:translateY(-1px);
+}
+.money-grid .rv-money-fix:focus-visible { outline:2px solid #8a70b5; outline-offset:2px; }
 .check-list { list-style:none; padding:0; margin:0; display:grid; gap:6px; }
 .check-list li { display:flex; gap:8px; align-items:flex-start; }
 .sticky-actions { position:sticky; bottom:0; z-index:5; background:rgba(249,247,252,.95); backdrop-filter:blur(6px);
@@ -153,7 +188,8 @@ export function render(el, params) {
     else if (d.ocr_status === "DONE")
       notice = `<div class="notice notice-ok mb-3"><span>✓</span><div><b>Đã đọc tự động từ ảnh.</b> Đối chiếu với ảnh hóa đơn, sửa chỗ sai, nhất là các ô có nhãn <span class="miss-tag">Thiếu</span> và các cảnh báo lệch tổng.</div></div>`;
     else if (d.ocr_status === "FAILED")
-      notice = `<div class="notice notice-fail mb-3"><span>✍</span><div><b>Không đọc được ảnh tự động.</b> Đối chiếu với ảnh hóa đơn và nhập tay các ô bên dưới.</div></div>`;
+      notice = `<div class="notice notice-fail mb-3"><span>✍</span><div class="flex-grow-1"><b>Không đọc được ảnh tự động.</b> Đối chiếu với ảnh hóa đơn và nhập tay các ô bên dưới.
+        ${d.can_edit_receipt && d.status === "DRAFT" ? '<div class="mt-2"><button type="button" class="btn btn-sm btn-outline-secondary" id="btn-ocr">Đọc lại ảnh</button></div>' : ""}</div></div>`;
     else
       notice = `<div class="notice notice-warn mb-3"><span>⏳</span><div class="flex-grow-1"><b>Ảnh chưa được đọc.</b> Bấm để hệ thống tự đọc, hoặc nhập tay luôn.
         ${d.can_edit_receipt ? '<div class="mt-2"><button type="button" class="btn btn-sm btn-primary" id="btn-ocr">Đọc ảnh tự động</button></div>' : ""}</div></div>`;
@@ -163,11 +199,17 @@ export function render(el, params) {
 
     box.innerHTML = `
       <a href="${back}" class="d-inline-block mb-2" style="color:#7a62a3;text-decoration:none">‹ Danh sách hóa đơn</a>
-      <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
-        <h2 class="page-title mb-0">Kiểm tra hóa đơn</h2>
-        <span class="rv-badge ${st.cls}" title="${esc(d.status)}">${st.text}</span>
-        ${d.group_id && d.status !== "DRAFT" ? `<a class="btn btn-sm btn-primary ms-auto" href="#/receipts/${d.id}/split">${d.status === "SETTLED" ? "Xem kết quả chia" : "Chia tiền →"}</a>` : ""}
-        <span class="text-muted small ms-1">${esc(d.group_name ? `Nhóm: ${d.group_name}` : "Cá nhân")} · tải lên ${formatDateTime(d.created_at)}</span>
+      <div class="d-flex justify-content-between align-items-start gap-2 mb-3">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+          <h2 class="page-title mb-0">Kiểm tra hóa đơn</h2>
+          <span class="rv-badge ${st.cls}" title="${esc(d.status)}">${st.text}</span>
+          ${d.group_id && d.status !== "DRAFT" ? `<a class="btn btn-sm btn-primary" href="#/receipts/${d.id}/split">${d.status === "SETTLED" ? "Xem kết quả chia" : "Chia tiền →"}</a>` : ""}
+          <span class="text-muted small ms-1">${esc(d.group_name ? `Nhóm: ${d.group_name}` : "Cá nhân")} · tải lên ${formatDateTime(d.created_at)}</span>
+        </div>
+        ${d.can_delete ? '<button type="button" class="btn btn-sm btn-outline-danger" id="btn-delete-receipt">Xóa hóa đơn</button>' : ""}
+        <a class="rv-close" href="${back}" aria-label="Thoát kiểm tra hóa đơn" title="Thoát">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </a>
       </div>
       <div class="row g-4">
         <div class="col-lg-5">
@@ -202,8 +244,9 @@ export function render(el, params) {
               <div class="col-6 col-md-3">
                 <label class="form-label" for="f-category">Danh mục</label>
                 <select class="form-select" id="f-category" name="category" ${dis(headerOn)}>
-                  ${catOptions.map((c) => `<option ${c === (d.category ?? "Ăn uống") ? "selected" : ""}>${esc(c)}</option>`).join("")}
+                  ${catOptions.map((c) => `<option ${c === (d.category ?? DEFAULT_CATEGORY) ? "selected" : ""}>${esc(c)}</option>`).join("")}
                 </select>
+                <div class="form-text" id="cat-hint"></div>
               </div>
             </div>
 
@@ -222,10 +265,11 @@ export function render(el, params) {
 
             <h3 class="section-title">Số tiền trên hóa đơn</h3>
             <div class="row g-3 money-grid mb-2">
-              ${moneyInput("subtotal", "Tạm tính", d.subtotal, headerOn, "sub", "= tổng các món")}
+              ${moneyInput("subtotal", "Tạm tính", d.subtotal, headerOn, "sub", "Lấy tổng các món")}
               ${moneyInput("tax_amount", "VAT", d.tax_amount, headerOn)}
               ${moneyInput("service_fee", "Phí dịch vụ", d.service_fee, headerOn)}
-              ${moneyInput("total_amount", "Tổng tiền", d.total_amount, headerOn, "total", "= tạm tính + VAT + phí")}
+              ${moneyInput("discount_amount", "Giảm giá / làm tròn", d.discount_amount, headerOn)}
+              ${moneyInput("total_amount", "Tổng tiền", d.total_amount, headerOn, "total", "Tổng chi phí")}
             </div>
             <div id="checks" class="mb-3" aria-live="polite"></div>
 
@@ -245,7 +289,7 @@ export function render(el, params) {
             <div class="form-text mb-2">${d.group_id ? "Người ứng tiền là người đã thanh toán; các thành viên khác sẽ nợ người này phần của mình." : "Hóa đơn cá nhân: người ứng tiền là bạn."}</div>
 
             ${editable || d.can_verify ? `<div class="sticky-actions d-flex flex-wrap gap-2 align-items-center">
-              ${editable ? '<button type="button" class="btn btn-outline-secondary" id="btn-save">Lưu nháp</button>' : ""}
+              ${editable ? `<button type="button" class="btn btn-outline-secondary" id="btn-save">${d.status === "DRAFT" ? "Lưu nháp" : "Lưu thay đổi"}</button>` : ""}
               ${d.status === "DRAFT" && d.can_verify ? '<button type="submit" class="btn btn-primary" id="btn-verify">Xác nhận hóa đơn</button>' : ""}
               <span class="text-muted small ms-auto" id="save-state"></span>
             </div>` : ""}
@@ -254,15 +298,19 @@ export function render(el, params) {
       </div>`;
 
     function moneyInput(name, label, value, on, fix, fixText) {
-      return `<div class="col-6 col-md-3">
+      const zeroDefault = name === "tax_amount" || name === "service_fee" || name === "discount_amount";
+      return `<div class="${name === "total_amount" ? "col-12 col-md-4" : "col-6 col-md-4"}">
         <label class="form-label" for="f-${name}">${label} <span data-miss="${name}"></span></label>
         <div class="input-group input-group-sm has-validation">
-          <input class="form-control text-end" id="f-${name}" name="${name}" inputmode="numeric" data-money placeholder="${name === "tax_amount" || name === "service_fee" ? "0" : "—"}"
+          <input class="form-control text-end" id="f-${name}" name="${name}" inputmode="numeric" data-money placeholder="${zeroDefault ? "0" : "—"}"
                  value="${value != null ? formatNumber(value) : ""}" ${on ? "" : "disabled"}>
           <span class="input-group-text">₫</span>
           <div class="invalid-feedback"></div>
         </div>
-        ${fix && on ? `<button type="button" class="btn btn-link btn-fix px-0" data-fix="${fix}">${fixText}</button>` : ""}
+        ${fix && on ? `<button type="button" class="rv-money-fix" data-fix="${fix}">
+          <svg viewBox="0 0 24 24" aria-hidden="true">${fix === "sub" ? '<path d="M4 5h16M4 10h10M4 15h8"/><path d="m15 17 2 2 4-5"/>' : '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 7h8M8 12h2m4 0h2m-8 4h2m4 0h2"/>'}</svg>
+          <span>${fixText}</span>
+        </button>` : "" }
       </div>`;
     }
 
@@ -327,6 +375,7 @@ export function render(el, params) {
         subtotal: moneyVal(form.elements.subtotal),
         tax: moneyVal(form.elements.tax_amount) ?? 0,
         fee: moneyVal(form.elements.service_fee) ?? 0,
+        discount: moneyVal(form.elements.discount_amount) ?? 0,
         total: moneyVal(form.elements.total_amount),
       };
       const missing = {
@@ -358,7 +407,7 @@ export function render(el, params) {
       if (kind === "sub") form.elements.subtotal.value = formatNumber(v.itemsSum);
       if (kind === "total") {
         const sub = moneyVal(form.elements.subtotal) ?? 0;
-        form.elements.total_amount.value = formatNumber(sub + v.tax + v.fee);
+        form.elements.total_amount.value = formatNumber(Math.max(0, sub + v.tax + v.fee - v.discount));
       }
       refresh();
       box.querySelector("#save-state") && (box.querySelector("#save-state").textContent = "Có thay đổi chưa lưu");
@@ -372,11 +421,56 @@ export function render(el, params) {
     form.addEventListener("change", refresh);
     refresh();
 
+    /* ----- Gợi ý danh mục theo tên cửa hàng (T05E17F) ----- */
+    // Chỉ gợi ý khi người dùng chưa tự chọn và hóa đơn chưa có danh mục riêng; chọn tay luôn thắng.
+    const catSelect = form.elements.category;
+    const catHint = box.querySelector("#cat-hint");
+    let catTouched = false;
+    catSelect.addEventListener("change", () => {
+      catTouched = true;
+      if (catHint) catHint.textContent = "";
+    });
+    form.elements.merchant_name.addEventListener("change", async () => {
+      const name = form.elements.merchant_name.value.trim();
+      if (!headerOn || catTouched || !name || (d.category && d.category !== DEFAULT_CATEGORY)) return;
+      try {
+        const { category } = await get(`/receipts/category-suggestion?merchant_name=${encodeURIComponent(name)}`);
+        if (!CATEGORIES.includes(category) || category === DEFAULT_CATEGORY || catSelect.value === category) return;
+        catSelect.value = category;
+        if (catHint) catHint.textContent = `Gợi ý theo tên cửa hàng: ${category}. Bạn có thể đổi.`;
+        form.dispatchEvent(new Event("input")); // đánh dấu "Có thay đổi chưa lưu"
+      } catch {
+        /* gợi ý chỉ là tiện ích, lỗi thì bỏ qua */
+      }
+    });
+
+    /* ----- Xóa hóa đơn ----- */
+    box.querySelector("#btn-delete-receipt")?.addEventListener("click", async (e) => {
+      const button = e.currentTarget;
+      const ok = await confirmDialog({
+        title: "Xóa hóa đơn?",
+        message: `Hóa đơn “${d.merchant_name || "Chưa có tên"}” và dữ liệu chia tiền liên quan sẽ bị xóa. Không thể hoàn tác.`,
+        okText: "Xóa",
+        cancelText: "Hủy",
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await withBusy(button, () => del(`/receipts/${d.id}`));
+        toast.success("Đã xóa hóa đơn");
+        window.location.hash = back;
+      } catch (err) {
+        toast.error(err);
+      }
+    });
+
     /* ----- Đọc ảnh tự động (khi còn PENDING) ----- */
     box.querySelector("#btn-ocr")?.addEventListener("click", async (e) => {
       try {
-        await withBusy(e.currentTarget, () => post(`/ocr/receipts/${d.id}`));
-        toast.info("Đã đọc ảnh, kiểm tra lại kết quả");
+        const res = await withBusy(e.currentTarget, () => post(`/ocr/receipts/${d.id}`, undefined, { timeoutMs: 300000 }));
+        if (res?.receipt?.ocr_status === "FAILED")
+          toast.error(new Error(res.warnings?.[0] ?? "Vẫn không đọc được ảnh, hãy nhập tay"));
+        else toast.info(res?.warnings?.length ? `Đã đọc ảnh. Lưu ý: ${res.warnings[0]}` : "Đã đọc ảnh, kiểm tra lại kết quả");
       } catch (err) {
         toast.error(err);
       }
@@ -448,12 +542,14 @@ export function render(el, params) {
           subtotal: moneyVal(form.elements.subtotal),
           tax_amount: moneyVal(form.elements.tax_amount) ?? 0,
           service_fee: moneyVal(form.elements.service_fee) ?? 0,
+          discount_amount: moneyVal(form.elements.discount_amount) ?? 0,
           total_amount: moneyVal(form.elements.total_amount),
         };
         // Chỉ gửi trường đã đổi (tránh làm hóa đơn đã xác nhận bị mở lại không cần thiết)
         const changed = Object.fromEntries(
           Object.entries(header).filter(([k, val]) => {
-            const before = ["subtotal", "tax_amount", "service_fee", "total_amount"].includes(k) ? num(d[k]) ?? (k === "tax_amount" || k === "service_fee" ? 0 : null) : (d[k] ?? null);
+            const zeroFields = ["tax_amount", "service_fee", "discount_amount"];
+            const before = ["subtotal", "total_amount", ...zeroFields].includes(k) ? num(d[k]) ?? (zeroFields.includes(k) ? 0 : null) : (d[k] ?? null);
             return before !== val;
           }),
         );

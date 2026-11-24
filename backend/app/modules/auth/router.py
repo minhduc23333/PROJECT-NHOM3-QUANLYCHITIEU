@@ -1,9 +1,16 @@
-from fastapi import APIRouter, status
+from fastapi import APIRouter, BackgroundTasks, status
 
 from app.core.deps import DB, CurrentUser
+from app.core import mailer
+from app.core.config import settings
 from app.core.errors import COMMON_ERRORS
 from app.modules.auth import service
-from app.modules.auth.schemas import LoginIn, RegisterIn, TokenOut, UserOut
+from app.modules.auth.schemas import (
+    LoginIn,
+    RegisterIn,
+    TokenOut,
+    UserOut,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"], responses=COMMON_ERRORS)
 
