@@ -38,6 +38,7 @@ _PLAIN_JSON_MODELS: set[str] = set()
 _LAST_GOOD_MODEL: str | None = None
 _COOLDOWN_SEC = 90.0
 _MAX_MODELS_TRIED = 6          # số model tối đa thử cho 1 lượt đọc
+<<<<<<< HEAD
 _MAX_AUDIT_ROUNDS = 1          # tối đa 1 lượt tự kiểm toán lại khi số tiền chưa khớp (tránh treo lâu)
 _MAX_IMAGE_SIDE = 1800         # đủ nét cho chữ nhỏ trên hóa đơn nhưng upload & xử lý nhanh hơn nhiều
 _JPEG_QUALITY = 85
@@ -67,6 +68,15 @@ def _configured_models(primary: str) -> list[str]:
         if normalized and normalized not in result:
             result.append(normalized)
     return result
+=======
+_MAX_AUDIT_ROUNDS = 2          # số lượt tự kiểm toán lại khi số tiền chưa khớp
+_MAX_IMAGE_SIDE = 2600         # giữ ảnh thật nét (hóa đơn cầm tay/nhàu/chữ nhỏ) - ưu tiên chính xác hơn tốc độ
+_JPEG_QUALITY = 92
+
+
+def _per_call_timeout() -> float:
+    return max(20.0, float(settings.GEMINI_CALL_TIMEOUT_SEC))
+>>>>>>> 183f54fae0693e6e492861efe8028d57c217a3a6
 
 
 def _total_budget() -> float:
@@ -214,6 +224,7 @@ def _discover_fallbacks(client, primary: str) -> list[str]:
         log.warning("Không lấy được danh sách model dự phòng: %s", exc)
         return []
 
+<<<<<<< HEAD
     candidates = [_normalize_model_name(name) for name in candidates]
     candidates = [
         name for name in dict.fromkeys(candidates)
@@ -228,6 +239,9 @@ def _discover_fallbacks(client, primary: str) -> list[str]:
         ),
         reverse=True,
     )
+=======
+    candidates.sort(reverse=True)          # bản mới (số lớn) lên trước
+>>>>>>> 183f54fae0693e6e492861efe8028d57c217a3a6
     _CACHED_FALLBACKS = candidates[:5]
     return [m for m in _CACHED_FALLBACKS if m != primary]
 
@@ -255,6 +269,7 @@ def _prepare_image_bytes(path: Path) -> tuple[bytes, str]:
 
 
 def _make_client(genai, types):
+<<<<<<< HEAD
     timeout_ms = int(_per_call_timeout() * 1000)
     try:
         return genai.Client(
@@ -263,6 +278,12 @@ def _make_client(genai, types):
                 timeout=timeout_ms,
                 retry_options=types.HttpRetryOptions(attempts=1),
             ),
+=======
+    try:
+        return genai.Client(
+            api_key=settings.GEMINI_API_KEY,
+            http_options=types.HttpOptions(timeout=int(_per_call_timeout() * 1000)),
+>>>>>>> 183f54fae0693e6e492861efe8028d57c217a3a6
         )
     except Exception:
         return genai.Client(api_key=settings.GEMINI_API_KEY)
@@ -286,7 +307,10 @@ def _call_model(
     def _do():
         contents = [types.Part.from_bytes(data=img_bytes, mime_type=mime), prompt]
         thinking_cls = getattr(types, "ThinkingConfig", None)
+<<<<<<< HEAD
         afc_cls = getattr(types, "AutomaticFunctionCallingConfig", None)
+=======
+>>>>>>> 183f54fae0693e6e492861efe8028d57c217a3a6
 
         configs: list[tuple[bool, dict]] = []
         if model_name not in _PLAIN_JSON_MODELS:
@@ -310,6 +334,7 @@ def _call_model(
         last_err: Exception | None = None
         for is_plain, cfg_kwargs in configs:
             try:
+<<<<<<< HEAD
                 call_cfg = dict(cfg_kwargs)
                 if afc_cls is not None:
                     call_cfg["automatic_function_calling"] = afc_cls(disable=True)
@@ -317,6 +342,12 @@ def _call_model(
                     model=model_name,
                     contents=contents,
                     config=types.GenerateContentConfig(**call_cfg),
+=======
+                resp = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(**cfg_kwargs),
+>>>>>>> 183f54fae0693e6e492861efe8028d57c217a3a6
                 )
                 if is_plain:
                     _PLAIN_JSON_MODELS.add(model_name)
@@ -495,6 +526,7 @@ def _invoke_with_fallback(
 ) -> tuple[_GeminiReceipt, str]:
     global _LAST_GOOD_MODEL
     now = time.monotonic()
+<<<<<<< HEAD
     primary = _normalize_model_name(settings.GEMINI_MODEL)
     last_exc: Exception | None = None
 
@@ -510,6 +542,23 @@ def _invoke_with_fallback(
     for m in configured:
         if _UNHEALTHY_UNTIL.get(m, 0) <= now and m not in ordered:
             ordered.append(m)
+=======
+    primary = settings.GEMINI_MODEL
+    last_exc: Exception | None = None
+
+    # Thứ tự: model đã chạy tốt gần nhất -> GEMINI_MODEL -> GEMINI_FALLBACK_MODELS -> model tự dò từ API key.
+    configured = [primary] + [m.strip() for m in (settings.GEMINI_FALLBACK_MODELS or "").split(",") if m.strip()]
+    ordered: list[str] = []
+    if _LAST_GOOD_MODEL and _UNHEALTHY_UNTIL.get(_LAST_GOOD_MODEL, 0) <= now and _LAST_GOOD_MODEL in configured:
+        ordered.append(_LAST_GOOD_MODEL)
+    for m in configured:
+        if _UNHEALTHY_UNTIL.get(m, 0) <= now and m not in ordered:
+            ordered.append(m)
+    if len(ordered) < 3:
+        for m in _discover_fallbacks(client, primary):
+            if _UNHEALTHY_UNTIL.get(m, 0) <= now and m not in ordered:
+                ordered.append(m)
+>>>>>>> 183f54fae0693e6e492861efe8028d57c217a3a6
     if not ordered:
         ordered.append(primary)
     ordered = ordered[:_MAX_MODELS_TRIED]

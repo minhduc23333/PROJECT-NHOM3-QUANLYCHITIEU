@@ -10,6 +10,8 @@ import {
 } from "./router.js";
 import * as login from "./pages/login.js";
 import * as register from "./pages/register.js";
+import * as forgot from "./pages/forgot.js";
+import * as reset from "./pages/reset.js";
 import * as dashboard from "./pages/dashboard.js";
 import * as groups from "./pages/groups.js";
 import * as receipts from "./pages/receipts.js";
@@ -17,11 +19,14 @@ import * as upload from "./pages/upload.js";
 import * as review from "./pages/review.js";
 import * as split from "./pages/split.js";
 import * as debts from "./pages/debts.js";
+import * as reports from "./pages/reports.js";
 import * as notFound from "./pages/notfound.js";
 import * as uiDemo from "./pages/ui-demo.js";
 
 addRoute("/login", login.render, { isPublic: true });
 addRoute("/register", register.render, { isPublic: true });
+addRoute("/forgot-password", forgot.render, { isPublic: true });
+addRoute("/reset-password/:token", reset.render, { isPublic: true });
 addRoute("/", dashboard.render);
 addRoute("/groups", groups.render);
 addRoute("/groups/:id", groups.renderDetail);
@@ -30,6 +35,7 @@ addRoute("/receipts/new", upload.render);
 addRoute("/receipts/:id", review.render);
 addRoute("/receipts/:id/split", split.render);
 addRoute("/debts", debts.render);
+addRoute("/reports", reports.render);
 addRoute("/dev/ui", uiDemo.render);
 
 let renderSeq = 0;

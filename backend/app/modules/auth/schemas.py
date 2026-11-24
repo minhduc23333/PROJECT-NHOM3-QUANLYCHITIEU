@@ -17,6 +17,13 @@ class RegisterIn(BaseModel):
         return v
 
 
+def _check_bcrypt_bytes(v: str) -> str:
+    # bcrypt chỉ nhận tối đa 72 BYTE; chữ có dấu tiếng Việt chiếm 2-3 byte/ký tự
+    if len(v.encode("utf-8")) > 72:
+        raise ValueError("Mật khẩu quá dài (tối đa 72 byte, chữ có dấu tính 2-3 byte)")
+    return v
+
+
 class LoginIn(BaseModel):
     email: EmailStr = Field(examples=["an@demo.vn"])
     password: str = Field(min_length=1, examples=["123456"])

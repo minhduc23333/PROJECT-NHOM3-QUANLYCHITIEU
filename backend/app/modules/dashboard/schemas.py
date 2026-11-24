@@ -37,3 +37,42 @@ class DashboardSummary(BaseModel):
     monthly: list[MonthTotal]         # chi tiêu cá nhân 6 tháng gần nhất (biểu đồ cột)
     by_category: list[CategoryTotal]  # chi tiêu cá nhân theo danh mục, giảm dần (biểu đồ tròn)
     recent_receipts: list[RecentReceipt]  # 5 hóa đơn SETTLED gần nhất
+
+
+# ---------- Báo cáo chi tiêu theo thời gian / danh mục (T05E180) ----------
+class ReportPeriod(BaseModel):
+    key: str                            # "2026-11", "2026-W46", "2026-11-16"
+    label: str                          # nhãn ngắn để vẽ trục: "11/2026", "16/11", ...
+    start: date
+    end: date
+    total: Decimal
+    by_category: dict[str, Decimal]     # dùng cho biểu đồ cột chồng theo danh mục
+
+
+class ReportCategory(BaseModel):
+    category: str
+    total: Decimal
+    receipt_count: int
+    percent: float                      # % trên tổng, làm tròn 1 chữ số
+
+
+class ReportMerchant(BaseModel):
+    merchant: str
+    total: Decimal
+    receipt_count: int
+
+
+class SpendingReport(BaseModel):
+    """Chỉ tính hóa đơn SETTLED trong phạm vi quyền của người dùng (giống Dashboard)."""
+
+    date_from: date
+    date_to: date
+    granularity: str                    # day | week | month
+    scope: str                          # me: phần của tôi | group: tổng hóa đơn của nhóm
+    group_id: int | None = None
+    total: Decimal
+    receipt_count: int
+    average_per_period: Decimal
+    periods: list[ReportPeriod]         # đủ mọi kỳ trong khoảng, kỳ không có chi tiêu = 0
+    by_category: list[ReportCategory]   # giảm dần theo số tiền
+    top_merchants: list[ReportMerchant] # tối đa 5

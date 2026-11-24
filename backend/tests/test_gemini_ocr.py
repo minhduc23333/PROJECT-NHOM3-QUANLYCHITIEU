@@ -103,8 +103,11 @@ def test_timeout_va_model_mac_dinh_uu_tien_do_chinh_xac():
     assert g._per_call_timeout() >= 60
     assert g._total_budget() >= g._per_call_timeout()
     assert settings.GEMINI_MODEL
+<<<<<<< HEAD
 
 
 def test_chuan_hoa_model_id_trong_env():
     assert g._normalize_model_name(" gemini 3.5-flash-lite ") == "gemini-3.5-flash-lite"
     assert g._normalize_model_name("models/gemini-2.5-flash") == "gemini-2.5-flash"
+=======
+>>>>>>> 183f54fae0693e6e492861efe8028d57c217a3a6
