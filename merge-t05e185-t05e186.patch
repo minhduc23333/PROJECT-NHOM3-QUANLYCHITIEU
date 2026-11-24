@@ -1,0 +1,1048 @@
+diff --git a/backend/.env.example b/backend/.env.example
+index f15db9b..70d6e9f 100644
+--- a/backend/.env.example
++++ b/backend/.env.example
+@@ -12,3 +12,14 @@ OCR_LANG=vie+eng
+ OCR_TIMEOUT_SEC=60
+ # Chỉ cần khi tesseract không nằm trong PATH. Vd Windows: TESSERACT_CMD=D:/Tesseract-OCR/tesseract.exe
+ TESSERACT_CMD=
++
++# Quên mật khẩu: địa chỉ web mà người dùng mở (để tạo liên kết trong email)
++PUBLIC_BASE_URL=http://localhost:8000
++PASSWORD_RESET_EXPIRE_MINUTES=30
++# Gửi email thật (tùy chọn). Để trống SMTP_HOST thì liên kết đặt lại chỉ hiện trong terminal của backend / giao diện (chế độ dev).
++# Gmail: bật xác minh 2 bước rồi tạo "Mật khẩu ứng dụng" (App password) dùng làm SMTP_PASSWORD.
++SMTP_HOST=
++SMTP_PORT=587
++SMTP_USER=
++SMTP_PASSWORD=
++SMTP_FROM=
+diff --git a/backend/app/core/config.py b/backend/app/core/config.py
+index 29b9e4c..15f9368 100644
+--- a/backend/app/core/config.py
++++ b/backend/app/core/config.py
+@@ -43,6 +43,16 @@ class Settings(BaseSettings):
+     GEMINI_CALL_TIMEOUT_SEC: float = 150.0    # tối đa cho 1 lượt gọi model
+     GEMINI_TOTAL_BUDGET_SEC: float = 280.0    # tối đa cho toàn bộ 1 lần đọc (gồm các lượt tự kiểm toán)
+ 
++    # Quên mật khẩu: liên kết đặt lại gửi qua email. Chưa có SMTP_HOST thì chỉ ghi liên kết vào log của backend (dev).
++    PUBLIC_BASE_URL: str = "http://localhost:8000"  # địa chỉ người dùng mở web (dùng để tạo liên kết trong email)
++    PASSWORD_RESET_EXPIRE_MINUTES: int = 30
++    SMTP_HOST: str = ""
++    SMTP_PORT: int = 587
++    SMTP_USER: str = ""
++    SMTP_PASSWORD: str = ""
++    SMTP_FROM: str = ""  # vd: "SmartSplit AI <no-reply@gmail.com>"; để trống thì dùng SMTP_USER
++    SMTP_STARTTLS: bool = True
++
+     @property
+     def cors_list(self) -> list[str]:
+         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+diff --git a/backend/app/core/mailer.py b/backend/app/core/mailer.py
+new file mode 100644
+index 0000000..e5ec92f
+--- /dev/null
++++ b/backend/app/core/mailer.py
+@@ -0,0 +1,38 @@
++"""Gửi email đơn giản qua SMTP (thư viện chuẩn smtplib, không cần cài thêm).
++
++Chưa cấu hình SMTP_HOST -> không gửi, chỉ ghi nội dung vào log để dev copy liên kết.
++Lỗi gửi mail không bao giờ làm hỏng request: chỉ ghi log và trả False.
++"""
++import logging
++import smtplib
++from email.message import EmailMessage
++
++from app.core.config import settings
++
++log = logging.getLogger("smartsplit.mail")
++
++
++def smtp_configured() -> bool:
++    return bool(settings.SMTP_HOST)
++
++
++def send_email(to: str, subject: str, body: str) -> bool:
++    if not smtp_configured():
++        log.warning("SMTP chưa cấu hình, KHÔNG gửi email tới %s.\nTiêu đề: %s\n%s", to, subject, body)
++        return False
++    msg = EmailMessage()
++    msg["Subject"] = subject
++    msg["From"] = settings.SMTP_FROM or settings.SMTP_USER
++    msg["To"] = to
++    msg.set_content(body)
++    try:
++        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15) as smtp:
++            if settings.SMTP_STARTTLS:
++                smtp.starttls()
++            if settings.SMTP_USER:
++                smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
++            smtp.send_message(msg)
++        return True
++    except Exception:  # noqa: BLE001  không để lỗi mạng/SMTP làm hỏng API
++        log.exception("Gửi email tới %s thất bại", to)
++        return False
+diff --git a/backend/app/core/security.py b/backend/app/core/security.py
+index 4b9fa5c..a7faa50 100644
+--- a/backend/app/core/security.py
++++ b/backend/app/core/security.py
+@@ -1,3 +1,4 @@
++import hashlib
+ from datetime import UTC, datetime, timedelta
+ 
+ import bcrypt
+@@ -31,4 +32,44 @@ def decode_access_token(token: str) -> int | None:
+         payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+         return int(payload["sub"])
+     except (jwt.PyJWTError, KeyError, ValueError):
+-        return None
+\ No newline at end of file
++        return None
++
++
++# ---------- Quên mật khẩu ----------
++# Token đặt lại mật khẩu KHÔNG lưu DB (stateless) nhưng:
++#  - ký bằng khóa riêng (JWT_SECRET + hậu tố) và dùng claim "uid" thay vì "sub" -> không thể dùng làm token đăng nhập;
++#  - chứa dấu vân tay của mật khẩu hiện tại -> dùng xong (đổi mật khẩu) là token cũ tự vô hiệu, chỉ dùng được 1 lần.
++RESET_TOKEN_TYPE = "pwd-reset"
++
++
++def password_fingerprint(password_hash: str) -> str:
++    return hashlib.sha256(password_hash.encode()).hexdigest()[:16]
++
++
++def _reset_key() -> str:
++    return settings.JWT_SECRET + ":password-reset"
++
++
++def create_password_reset_token(user_id: int, password_hash: str) -> tuple[str, int]:
++    """Trả về (token, số giây còn hiệu lực)."""
++    expires_in = settings.PASSWORD_RESET_EXPIRE_MINUTES * 60
++    now = datetime.now(UTC)
++    payload = {
++        "uid": str(user_id),
++        "typ": RESET_TOKEN_TYPE,
++        "fp": password_fingerprint(password_hash),
++        "iat": now,
++        "exp": now + timedelta(seconds=expires_in),
++    }
++    return jwt.encode(payload, _reset_key(), algorithm=settings.JWT_ALGORITHM), expires_in
++
++
++def read_password_reset_token(token: str) -> tuple[int, str] | None:
++    """Trả về (user_id, fingerprint) hoặc None nếu token sai/hết hạn/không phải token đặt lại mật khẩu."""
++    try:
++        payload = jwt.decode(token, _reset_key(), algorithms=[settings.JWT_ALGORITHM])
++        if payload.get("typ") != RESET_TOKEN_TYPE:
++            return None
++        return int(payload["uid"]), str(payload["fp"])
++    except (jwt.PyJWTError, KeyError, ValueError, TypeError):
++        return None
+diff --git a/backend/app/modules/auth/router.py b/backend/app/modules/auth/router.py
+index cf81dee..cd9aa01 100644
+--- a/backend/app/modules/auth/router.py
++++ b/backend/app/modules/auth/router.py
+@@ -1,9 +1,19 @@
+-from fastapi import APIRouter, status
++from fastapi import APIRouter, BackgroundTasks, status
+ 
+ from app.core.deps import DB, CurrentUser
++from app.core import mailer
++from app.core.config import settings
+ from app.core.errors import COMMON_ERRORS
+ from app.modules.auth import service
+-from app.modules.auth.schemas import LoginIn, RegisterIn, TokenOut, UserOut
++from app.modules.auth.schemas import (
++    ForgotPasswordIn,
++    LoginIn,
++    MessageOut,
++    RegisterIn,
++    ResetPasswordIn,
++    TokenOut,
++    UserOut,
++)
+ 
+ router = APIRouter(prefix="/auth", tags=["auth"], responses=COMMON_ERRORS)
+ 
+@@ -20,4 +30,48 @@ def login(data: LoginIn, db: DB):
+ 
+ @router.get("/me", response_model=UserOut, summary="Thông tin người dùng hiện tại")
+ def me(user: CurrentUser):
+-    return user
+\ No newline at end of file
++    return user
++
++
++def _send_reset_email(to: str, full_name: str, link: str) -> None:
++    mailer.send_email(
++        to,
++        "Đặt lại mật khẩu SmartSplit AI",
++        f"Xin chào {full_name},\n\n"
++        "Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản SmartSplit AI của bạn.\n"
++        f"Bấm vào liên kết sau để đặt mật khẩu mới (có hiệu lực {settings.PASSWORD_RESET_EXPIRE_MINUTES} phút, dùng được 1 lần):\n\n"
++        f"{link}\n\n"
++        "Nếu bạn không yêu cầu, hãy bỏ qua email này, mật khẩu của bạn vẫn giữ nguyên.\n\n"
++        "SmartSplit AI",
++    )
++
++
++@router.post(
++    "/forgot-password",
++    response_model=MessageOut,
++    summary="Quên mật khẩu: gửi liên kết đặt lại qua email",
++    description=(
++        "Luôn trả cùng một thông báo dù email có tồn tại hay không (không lộ email nào đã đăng ký). "
++        "Tối đa 5 yêu cầu / email / 15 phút (429)."
++    ),
++)
++def forgot_password(data: ForgotPasswordIn, db: DB, background: BackgroundTasks):
++    found = service.request_password_reset(db, data.email)
++    dev_link = None
++    if found is not None:
++        user, link = found
++        background.add_task(_send_reset_email, user.email, user.full_name, link)  # gửi nền, không làm chậm response
++        if settings.APP_ENV == "dev" and not mailer.smtp_configured():
++            dev_link = link  # dev chưa có SMTP: trả liên kết để thử luôn trên giao diện
++    return MessageOut(message=service.FORGOT_MESSAGE, dev_reset_link=dev_link)
++
++
++@router.post(
++    "/reset-password",
++    response_model=MessageOut,
++    summary="Đặt mật khẩu mới bằng token trong liên kết email",
++    description="Token sai / hết hạn / đã dùng rồi: 400 (code `RESET_TOKEN_INVALID`).",
++)
++def reset_password(data: ResetPasswordIn, db: DB):
++    service.reset_password(db, data.token, data.new_password)
++    return MessageOut(message=service.RESET_OK_MESSAGE)
+diff --git a/backend/app/modules/auth/schemas.py b/backend/app/modules/auth/schemas.py
+index eb78cac..f7aeb1f 100644
+--- a/backend/app/modules/auth/schemas.py
++++ b/backend/app/modules/auth/schemas.py
+@@ -17,6 +17,13 @@ class RegisterIn(BaseModel):
+         return v
+ 
+ 
++def _check_bcrypt_bytes(v: str) -> str:
++    # bcrypt chỉ nhận tối đa 72 BYTE; chữ có dấu tiếng Việt chiếm 2-3 byte/ký tự
++    if len(v.encode("utf-8")) > 72:
++        raise ValueError("Mật khẩu quá dài (tối đa 72 byte, chữ có dấu tính 2-3 byte)")
++    return v
++
++
+ class LoginIn(BaseModel):
+     email: EmailStr = Field(examples=["an@demo.vn"])
+     password: str = Field(min_length=1, examples=["123456"])
+@@ -35,4 +42,24 @@ class TokenOut(BaseModel):
+     access_token: str
+     token_type: str = "bearer"
+     expires_in: int
+-    user: UserOut
+\ No newline at end of file
++    user: UserOut
++
++
++class ForgotPasswordIn(BaseModel):
++    email: EmailStr = Field(examples=["an@demo.vn"])
++
++
++class ResetPasswordIn(BaseModel):
++    token: str = Field(min_length=10, max_length=2000, description="Token trong liên kết đặt lại mật khẩu gửi qua email")
++    new_password: str = Field(min_length=6, max_length=72, examples=["matkhaumoi123"])
++
++    @field_validator("new_password")
++    @classmethod
++    def password_fits_bcrypt(cls, v: str) -> str:
++        return _check_bcrypt_bytes(v)
++
++
++class MessageOut(BaseModel):
++    message: str
++    # Chỉ có khi APP_ENV=dev và chưa cấu hình SMTP (để thử nghiệm không cần email thật). Production không bao giờ trả.
++    dev_reset_link: str | None = None
+diff --git a/backend/app/modules/auth/service.py b/backend/app/modules/auth/service.py
+index 1be534d..fa1b0d5 100644
+--- a/backend/app/modules/auth/service.py
++++ b/backend/app/modules/auth/service.py
+@@ -1,8 +1,19 @@
++import time
++from collections import defaultdict, deque
++
+ from sqlalchemy import select
+ from sqlalchemy.orm import Session
+ 
+-from app.core.errors import Conflict, Unauthorized
+-from app.core.security import create_access_token, hash_password, verify_password
++from app.core.config import settings
++from app.core.errors import AppError, BadRequest, Conflict, Unauthorized
++from app.core.security import (
++    create_access_token,
++    create_password_reset_token,
++    hash_password,
++    password_fingerprint,
++    read_password_reset_token,
++    verify_password,
++)
+ from app.models import User
+ from app.modules.auth.schemas import LoginIn, RegisterIn, TokenOut, UserOut
+ 
+@@ -27,4 +38,59 @@ def login(db: Session, data: LoginIn) -> TokenOut:
+     user = db.scalar(select(User).where(User.email == data.email.lower()))
+     if user is None or not verify_password(data.password, user.password_hash):
+         raise Unauthorized("Email hoặc mật khẩu không đúng")
+-    return _token_for(user)
+\ No newline at end of file
++    return _token_for(user)
++
++
++# ---------- Quên mật khẩu ----------
++FORGOT_MESSAGE = "Nếu email này đã đăng ký, chúng tôi đã gửi liên kết đặt lại mật khẩu. Hãy kiểm tra hộp thư (cả mục Spam)."
++RESET_OK_MESSAGE = "Đã đặt lại mật khẩu. Bạn có thể đăng nhập bằng mật khẩu mới."
++RESET_INVALID_MESSAGE = "Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn. Hãy yêu cầu liên kết mới."
++
++# Chống spam: tối đa 5 yêu cầu / email / 15 phút (bộ nhớ trong tiến trình, đủ cho 1 server)
++RATE_LIMIT_MAX = 5
++RATE_LIMIT_WINDOW_SEC = 15 * 60
++_attempts: dict[str, deque[float]] = defaultdict(deque)
++
++
++class TooManyRequests(AppError):
++    status_code, code = 429, "TOO_MANY_REQUESTS"
++
++
++def reset_rate_limit() -> None:
++    """Dùng trong test."""
++    _attempts.clear()
++
++
++def _check_rate_limit(key: str) -> None:
++    now = time.monotonic()
++    q = _attempts[key]
++    while q and now - q[0] > RATE_LIMIT_WINDOW_SEC:
++        q.popleft()
++    if len(q) >= RATE_LIMIT_MAX:
++        raise TooManyRequests("Bạn thử quá nhiều lần, vui lòng đợi ít phút rồi thử lại.")
++    q.append(now)
++
++
++def request_password_reset(db: Session, email: str) -> tuple[User, str] | None:
++    """Tạo liên kết đặt lại mật khẩu. Email không tồn tại -> None (API vẫn trả cùng một thông báo để không lộ email nào đã đăng ký)."""
++    email = email.lower()
++    _check_rate_limit(email)
++    user = db.scalar(select(User).where(User.email == email))
++    if user is None:
++        return None
++    token, _ = create_password_reset_token(user.id, user.password_hash)
++    link = f"{settings.PUBLIC_BASE_URL.rstrip('/')}/#/reset-password/{token}"
++    return user, link
++
++
++def reset_password(db: Session, token: str, new_password: str) -> None:
++    parsed = read_password_reset_token(token)
++    if parsed is None:
++        raise BadRequest(RESET_INVALID_MESSAGE, code="RESET_TOKEN_INVALID")
++    user_id, fingerprint = parsed
++    user = db.get(User, user_id)
++    # Dấu vân tay không khớp = mật khẩu đã được đổi sau khi cấp token -> token đã dùng rồi
++    if user is None or password_fingerprint(user.password_hash) != fingerprint:
++        raise BadRequest(RESET_INVALID_MESSAGE, code="RESET_TOKEN_INVALID")
++    user.password_hash = hash_password(new_password)
++    db.commit()
+diff --git a/backend/scripts/check_api_latency.py b/backend/scripts/check_api_latency.py
+new file mode 100644
+index 0000000..309b92d
+--- /dev/null
++++ b/backend/scripts/check_api_latency.py
+@@ -0,0 +1,69 @@
++"""Đo thời gian phản hồi API trên SERVER THẬT (MySQL thật) - T05E186: yêu cầu mỗi API < 2 giây.
++
++Cách dùng (server đang chạy ở cổng 8000, database đã có dữ liệu, vd chạy `python -m scripts.seed`):
++    python -m scripts.check_api_latency
++    python -m scripts.check_api_latency --base http://127.0.0.1:8000 --email an@demo.vn --password 123456 --runs 5
++Thoát với mã 1 nếu có API chậm hơn --limit giây (mặc định 2.0).
++"""
++import argparse
++import statistics
++import sys
++import time
++
++import httpx
++
++
++def main() -> int:
++    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    ap.add_argument("--base", default="http://127.0.0.1:8000")
++    ap.add_argument("--email", default="an@demo.vn")
++    ap.add_argument("--password", default="123456")
++    ap.add_argument("--runs", type=int, default=5, help="số lần gọi mỗi API")
++    ap.add_argument("--limit", type=float, default=2.0, help="ngưỡng giây")
++    a = ap.parse_args()
++
++    with httpx.Client(base_url=a.base, timeout=30.0) as c:
++        t0 = time.perf_counter()
++        r = c.post("/api/auth/login", json={"email": a.email, "password": a.password})
++        login_dt = time.perf_counter() - t0
++        if r.status_code != 200:
++            print(f"Đăng nhập thất bại ({r.status_code}): {r.text[:200]}")
++            return 2
++        h = {"Authorization": f"Bearer {r.json()['access_token']}"}
++
++        paths = ["/api/auth/me", "/api/dashboard/summary", "/api/groups"]
++        groups = c.get("/api/groups", headers=h).json()
++        if groups:
++            gid = groups[0]["id"]
++            paths += [f"/api/groups/{gid}", f"/api/groups/{gid}/receipts", f"/api/groups/{gid}/debts"]
++            receipts = c.get(f"/api/groups/{gid}/receipts", headers=h).json()
++            if receipts:
++                rid = receipts[0]["id"]
++                paths += [f"/api/receipts/{rid}", f"/api/receipts/{rid}/selections", f"/api/receipts/{rid}/debts"]
++        paths.append("/api/receipts/category-suggestion?merchant_name=Highlands")
++
++        rows = [("POST /api/auth/login", [login_dt])]
++        for p in paths:
++            times = []
++            for _ in range(a.runs):
++                t0 = time.perf_counter()
++                res = c.get(p, headers=h)
++                times.append(time.perf_counter() - t0)
++                if res.status_code != 200:
++                    print(f"CẢNH BÁO: GET {p} trả {res.status_code}")
++                    break
++            rows.append((f"GET {p}", times))
++
++    print(f"{'API':58} {'nhanh nhất':>10} {'trung bình':>10} {'chậm nhất':>10}")
++    slow = 0
++    for name, ts in rows:
++        worst = max(ts)
++        flag = "  <-- CHẬM" if worst >= a.limit else ""
++        slow += worst >= a.limit
++        print(f"{name[:58]:58} {min(ts):9.3f}s {statistics.mean(ts):9.3f}s {worst:9.3f}s{flag}")
++    print(f"\nNgưỡng {a.limit:.1f}s: " + ("TẤT CẢ ĐẠT" if not slow else f"{slow} API CHẬM, cần tối ưu"))
++    return 1 if slow else 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/backend/tests/test_api_latency.py b/backend/tests/test_api_latency.py
+new file mode 100644
+index 0000000..1a08e55
+--- /dev/null
++++ b/backend/tests/test_api_latency.py
+@@ -0,0 +1,78 @@
++"""Thời gian phản hồi API < 2 giây (T05E186) trên dữ liệu cỡ vừa: 60 hóa đơn đã chốt, mỗi hóa đơn 8 món, 3 người chia, có công nợ.
++
++Chạy trên SQLite trong bộ nhớ nên chỉ bắt các lỗi truy vấn N+1 / vòng lặp chậm do code.
++Muốn đo trên MySQL thật + server thật: python -m scripts.check_api_latency
++"""
++import time
++from datetime import date, timedelta
++from decimal import Decimal
++
++import pytest
++from sqlalchemy import select
++
++from app.core.db import SessionLocal
++from app.models import Debt, Receipt, ReceiptItem, SplitDetail, User
++from tests.conftest import register
++
++LIMIT_SEC = 2.0
++D = Decimal
++
++
++@pytest.fixture()
++def loaded(client):
++    h = {n: register(client, f"{n.lower()}@x.vn", f"Người {n}") for n in "ABC"}
++    gid = client.post("/api/groups", json={"name": "Nhóm lớn"}, headers=h["A"]).json()["id"]
++    for n in "BC":
++        client.post(f"/api/groups/{gid}/members", json={"email": f"{n.lower()}@x.vn"}, headers=h["A"])
++    with SessionLocal() as db:
++        uid = {n: db.scalar(select(User.id).where(User.email == f"{n.lower()}@x.vn")) for n in "ABC"}
++        first = None
++        for k in range(60):
++            r = Receipt(group_id=gid, uploaded_by=uid["A"], payer_id=uid["A"], image_path="x.jpg", status="SETTLED",
++                        merchant_name=f"Quán {k}", category="Ăn uống", total_amount=D(240000), subtotal=D(240000),
++                        receipt_date=date.today() - timedelta(days=k * 3))
++            db.add(r)
++            db.flush()
++            first = first or r.id
++            for i in range(8):
++                db.add(ReceiptItem(receipt_id=r.id, item_name=f"Món {i}", quantity=D(1), unit_price=D(30000), line_total=D(30000)))
++            for u in uid.values():
++                db.add(SplitDetail(receipt_id=r.id, user_id=u, item_amount=D(80000), fee_amount=D(0), final_amount=D(80000)))
++            db.add(Debt(receipt_id=r.id, debtor_id=uid["B"], creditor_id=uid["A"], amount=D(80000), status="OPEN"))
++        db.commit()
++    return {"h": h, "gid": gid, "rid": first}
++
++
++def _timed(client, method, url, **kw):
++    t0 = time.perf_counter()
++    res = getattr(client, method)(url, **kw)
++    return res, time.perf_counter() - t0
++
++
++def test_main_endpoints_respond_under_2_seconds(client, loaded):
++    h, gid, rid = loaded["h"]["A"], loaded["gid"], loaded["rid"]
++    endpoints = [
++        ("get", "/api/auth/me"),
++        ("get", "/api/dashboard/summary"),
++        ("get", "/api/groups"),
++        ("get", f"/api/groups/{gid}"),
++        ("get", f"/api/groups/{gid}/receipts"),
++        ("get", f"/api/groups/{gid}/debts"),
++        ("get", f"/api/receipts/{rid}"),
++        ("get", f"/api/receipts/{rid}/selections"),
++        ("get", f"/api/receipts/{rid}/debts"),
++        ("get", "/api/receipts/category-suggestion?merchant_name=Highlands"),
++    ]
++    client.get("/api/auth/me", headers=h)  # khởi động nguội (import, kết nối) không tính vào số đo
++    slow = []
++    for method, url in endpoints:
++        res, dt = _timed(client, method, url, headers=h)
++        assert res.status_code == 200, f"{url}: {res.status_code} {res.text[:200]}"
++        if dt >= LIMIT_SEC:
++            slow.append(f"{url}: {dt:.2f}s")
++    assert not slow, "API chậm hơn 2s: " + "; ".join(slow)
++
++
++def test_login_under_2_seconds(client, loaded):
++    res, dt = _timed(client, "post", "/api/auth/login", json={"email": "a@x.vn", "password": "123456"})
++    assert res.status_code == 200 and dt < LIMIT_SEC, f"login {dt:.2f}s"
+diff --git a/backend/tests/test_password_reset.py b/backend/tests/test_password_reset.py
+new file mode 100644
+index 0000000..4e36093
+--- /dev/null
++++ b/backend/tests/test_password_reset.py
+@@ -0,0 +1,120 @@
++"""Test quên mật khẩu: không lộ email, token 1 lần dùng / hết hạn, không dùng chéo với token đăng nhập, chống spam."""
++import pytest
++
++from app.core.config import settings
++from app.modules.auth import service
++
++USER = {"full_name": "An Nguyễn", "email": "an@demo.vn", "password": "matkhaucu123"}
++NEW = "matkhaumoi456"
++
++
++@pytest.fixture(autouse=True)
++def _clean_limiter():
++    service.reset_rate_limit()
++    yield
++    service.reset_rate_limit()
++
++
++def _forgot(client, email=USER["email"]):
++    return client.post("/api/auth/forgot-password", json={"email": email})
++
++
++def _token_from(res):
++    link = res.json()["dev_reset_link"]
++    assert "/#/reset-password/" in link
++    return link.split("/#/reset-password/")[1]
++
++
++def _reset(client, token, pw=NEW):
++    return client.post("/api/auth/reset-password", json={"token": token, "new_password": pw})
++
++
++def _login(client, pw):
++    return client.post("/api/auth/login", json={"email": USER["email"], "password": pw})
++
++
++def test_forgot_does_not_reveal_whether_email_exists(client):
++    client.post("/api/auth/register", json=USER)
++    known, unknown = _forgot(client), _forgot(client, "khong-co@demo.vn")
++    assert known.status_code == unknown.status_code == 200
++    assert known.json()["message"] == unknown.json()["message"]
++    assert unknown.json()["dev_reset_link"] is None
++
++
++def test_forgot_rejects_bad_email_format(client):
++    assert _forgot(client, "khong-phai-email").status_code == 422
++
++
++def test_full_flow_new_password_works_old_one_does_not(client):
++    client.post("/api/auth/register", json=USER)
++    token = _token_from(_forgot(client))
++    r = _reset(client, token)
++    assert r.status_code == 200, r.text
++    assert _login(client, NEW).status_code == 200
++    assert _login(client, USER["password"]).status_code == 401
++
++
++def test_reset_token_is_single_use(client):
++    client.post("/api/auth/register", json=USER)
++    token = _token_from(_forgot(client))
++    assert _reset(client, token).status_code == 200
++    again = _reset(client, token, "mot-mat-khau-khac-789")
++    assert again.status_code == 400
++    assert again.json()["error"]["code"] == "RESET_TOKEN_INVALID"
++    assert _login(client, NEW).status_code == 200  # mật khẩu không bị đổi lần 2
++
++
++def test_garbage_and_tampered_tokens_rejected(client):
++    client.post("/api/auth/register", json=USER)
++    token = _token_from(_forgot(client))
++    for bad in ["khong-phai-token-gi-ca", token[:-3] + "abc", token + "x"]:
++        r = _reset(client, bad)
++        assert r.status_code == 400 and r.json()["error"]["code"] == "RESET_TOKEN_INVALID"
++    assert _login(client, USER["password"]).status_code == 200  # mật khẩu cũ còn nguyên
++
++
++def test_expired_token_rejected(client, monkeypatch):
++    client.post("/api/auth/register", json=USER)
++    monkeypatch.setattr(settings, "PASSWORD_RESET_EXPIRE_MINUTES", -1)  # token sinh ra đã hết hạn
++    token = _token_from(_forgot(client))
++    assert _reset(client, token).status_code == 400
++
++
++def test_access_token_cannot_be_used_as_reset_token_and_vice_versa(client):
++    client.post("/api/auth/register", json=USER)
++    access = _login(client, USER["password"]).json()["access_token"]
++    assert _reset(client, access).status_code == 400            # token đăng nhập không đặt lại được mật khẩu
++    reset_token = _token_from(_forgot(client))
++    me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {reset_token}"})
++    assert me.status_code == 401                                 # token đặt lại không đăng nhập được
++
++
++def test_reset_password_validation(client):
++    client.post("/api/auth/register", json=USER)
++    token = _token_from(_forgot(client))
++    assert _reset(client, token, "123").status_code == 422             # quá ngắn
++    assert _reset(client, token, "ế" * 30).status_code == 422          # 90 byte > 72
++    assert _login(client, USER["password"]).status_code == 200          # token vẫn dùng được sau khi bị 422
++    assert _reset(client, token).status_code == 200
++
++
++def test_rate_limit_per_email(client):
++    client.post("/api/auth/register", json=USER)
++    codes = [_forgot(client).status_code for _ in range(service.RATE_LIMIT_MAX + 1)]
++    assert codes[:-1] == [200] * service.RATE_LIMIT_MAX and codes[-1] == 429
++    assert _forgot(client, "nguoi-khac@demo.vn").status_code == 200   # email khác không bị ảnh hưởng
++
++
++def test_email_sent_in_background_and_dev_link_hidden_when_smtp_configured(client, monkeypatch):
++    sent = []
++    monkeypatch.setattr("app.core.mailer.send_email", lambda to, subject, body: sent.append((to, subject, body)) or True)
++    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.test")   # giống production: có SMTP
++    client.post("/api/auth/register", json=USER)
++    res = _forgot(client)
++    assert res.status_code == 200 and res.json()["dev_reset_link"] is None   # không lộ liên kết qua API
++    assert len(sent) == 1 and sent[0][0] == USER["email"]
++    assert "/#/reset-password/" in sent[0][2] and "An Nguyễn" in sent[0][2]
++    _forgot(client, "khong-co@demo.vn")
++    assert len(sent) == 1                                              # email lạ: không gửi gì
++    token = sent[0][2].split("/#/reset-password/")[1].split()[0]
++    assert _reset(client, token).status_code == 200
+diff --git a/backend/tests/test_split_calc_properties.py b/backend/tests/test_split_calc_properties.py
+new file mode 100644
+index 0000000..7a1a4cc
+--- /dev/null
++++ b/backend/tests/test_split_calc_properties.py
+@@ -0,0 +1,76 @@
++"""Regression logic chia tiền (T05E186): kiểm tra TÍNH CHẤT của calc.py trên nhiều bộ dữ liệu ngẫu nhiên có seed cố định.
++
++Bất biến cần luôn đúng:
++  1. Σ final_amount = total_amount (không mất, không thừa một đồng).
++  2. Mọi item_amount / fee_amount >= 0 và là số nguyên đồng (ràng buộc DB).
++  3. Phần lẻ chỉ dồn cho người trả tiền, người khác không bị cộng thêm.
++"""
++import random
++from decimal import Decimal
++
++import pytest
++
++from app.modules.split import calc
++
++D = Decimal
++
++
++def _case(rng):
++    n_users = rng.randint(1, 6)
++    users = list(range(1, n_users + 1))
++    items = {i: D(rng.randint(1, 500) * rng.choice([1, 100, 1000])) for i in range(1, rng.randint(1, 12) + 1)}
++    selectors = {i: rng.sample(users, rng.randint(1, n_users)) for i in items}   # mọi món có ít nhất 1 người chọn
++    base = sum(items.values(), D(0))
++    fee = D(rng.randint(0, int(base) // 4)) if rng.random() < 0.8 else D(0)
++    discount = D(rng.randint(0, min(int(base), 5000))) if rng.random() < 0.5 else D(0)
++    total = base + fee - discount
++    return users, items, selectors, fee, discount, total
++
++
++@pytest.mark.parametrize("seed", range(40))
++def test_invariants_on_random_receipts(seed):
++    rng = random.Random(seed)
++    for _ in range(25):
++        users, items, selectors, fee, discount, total = _case(rng)
++        payer = rng.choice(users)
++        shares = calc.assign_remainder(calc.compute_shares(items, selectors, fee, discount), payer, total)
++        assert sum((s.final_amount for s in shares.values()), D(0)) == total
++        for s in shares.values():
++            assert s.item_amount >= 0 and s.fee_amount >= 0
++            assert s.item_amount == s.item_amount.to_integral_value()
++            assert s.fee_amount == s.fee_amount.to_integral_value()
++
++
++def test_remainder_only_changes_the_payer():
++    items, selectors = {1: D(100000)}, {1: [1, 2, 3]}          # 100.000 / 3 = 33.333,33...
++    before = calc.compute_shares(items, selectors, D(0))
++    after = calc.assign_remainder(before, payer_id=2, total_amount=D(100000))
++    assert after[1].final_amount == before[1].final_amount == D(33333)
++    assert after[3].final_amount == before[3].final_amount == D(33333)
++    assert after[2].final_amount == D(33334)                    # người trả nhận phần lẻ 1 đồng
++
++
++def test_discount_larger_than_fee_never_makes_negative_amounts():
++    items, selectors = {1: D(50000), 2: D(30000)}, {1: [1], 2: [2]}
++    shares = calc.compute_shares(items, selectors, fee_total=D(0), discount_amount=D(641))
++    assert all(s.item_amount >= 0 and s.fee_amount >= 0 for s in shares.values())
++    final = calc.assign_remainder(shares, payer_id=1, total_amount=D(80000) - D(641))
++    assert sum((s.final_amount for s in final.values()), D(0)) == D(79359)
++
++
++def test_unselected_item_goes_to_payer_so_total_still_matches():
++    items, selectors = {1: D(60000), 2: D(40000)}, {1: [1]}     # món 2 chưa ai chọn
++    final = calc.assign_remainder(calc.compute_shares(items, selectors, D(0)), payer_id=2, total_amount=D(100000))
++    assert final[1].final_amount == D(60000) and final[2].final_amount == D(40000)
++
++
++def test_tax_and_service_fee_are_proportional_to_item_share():
++    items, selectors = {1: D(75000), 2: D(25000)}, {1: [1], 2: [2]}
++    shares = calc.compute_shares(items, selectors, fee_total=D(10000))
++    assert shares[1].fee_amount == D(7500) and shares[2].fee_amount == D(2500)
++
++
++def test_total_smaller_than_shares_is_rejected_not_written():
++    shares = calc.compute_shares({1: D(100000)}, {1: [1]}, D(0))
++    with pytest.raises(ValueError):
++        calc.assign_remainder(shares, payer_id=1, total_amount=D(99000))
+diff --git a/frontend/css/auth.css b/frontend/css/auth.css
+index a49883f..9757a87 100644
+--- a/frontend/css/auth.css
++++ b/frontend/css/auth.css
+@@ -948,3 +948,28 @@ body.public #toasts {
+     transform: none !important;
+   }
+ }
++
++/* Hộp thông báo (trang quên mật khẩu) */
++.auth-note {
++  margin-top: 18px;
++  padding: 14px 16px;
++  border-radius: 12px;
++  border: 1px solid #cfe9dc;
++  background: #eefaf3;
++  color: #2f5d47;
++  font-size: 0.9rem;
++  line-height: 1.5;
++}
++.auth-note p {
++  margin: 4px 0 0;
++}
++.auth-note .auth-note-dev {
++  margin-top: 10px;
++  padding-top: 10px;
++  border-top: 1px dashed #b9dcc9;
++  color: var(--muted);
++}
++.auth-note .auth-note-dev a {
++  color: var(--brand-dark);
++  font-weight: 600;
++}
+diff --git a/frontend/js/app.js b/frontend/js/app.js
+index 91938e5..31d4282 100644
+--- a/frontend/js/app.js
++++ b/frontend/js/app.js
+@@ -10,6 +10,8 @@ import {
+ } from "./router.js";
+ import * as login from "./pages/login.js";
+ import * as register from "./pages/register.js";
++import * as forgot from "./pages/forgot.js";
++import * as reset from "./pages/reset.js";
+ import * as dashboard from "./pages/dashboard.js";
+ import * as groups from "./pages/groups.js";
+ import * as receipts from "./pages/receipts.js";
+@@ -22,6 +24,8 @@ import * as uiDemo from "./pages/ui-demo.js";
+ 
+ addRoute("/login", login.render, { isPublic: true });
+ addRoute("/register", register.render, { isPublic: true });
++addRoute("/forgot-password", forgot.render, { isPublic: true });
++addRoute("/reset-password/:token", reset.render, { isPublic: true });
+ addRoute("/", dashboard.render);
+ addRoute("/groups", groups.render);
+ addRoute("/groups/:id", groups.renderDetail);
+diff --git a/frontend/js/charts.js b/frontend/js/charts.js
+index 81d61be..350b97b 100644
+--- a/frontend/js/charts.js
++++ b/frontend/js/charts.js
+@@ -2,6 +2,76 @@
+ import { formatVND, formatVNDShort } from "./format.js";
+ 
+ const instances = new WeakMap();
++const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
++
++// Hiệu ứng hover cho biểu đồ cột (giống cách "hoverOffset" làm miếng biểu đồ tròn trồi ra):
++// cột được hover phóng to nhẹ, nhô lên và đổ bóng, chuyển động mượt. Tắt nếu người dùng bật "giảm chuyển động".
++const LIFT_PX = 8; // nhô lên tối đa
++const LIFT_GROW = 0.12; // rộng thêm tối đa (12%)
++const barHoverLift = {
++  id: "barHoverLift",
++  afterEvent(chart, args) {
++    const s = (chart.$lift ??= { cur: [], target: -1, raf: 0 });
++    const hit = args.event.type === "mouseout" ? [] : chart.getElementsAtEventForMode(args.event, "index", { intersect: false }, false);
++    const next = hit.length ? hit[0].index : -1;
++    chart.canvas.style.cursor = next >= 0 ? "pointer" : "default";
++    if (next === s.target) return;
++    s.target = next;
++    if (reduceMotion()) {
++      // Người dùng bật "giảm chuyển động": nhô lên ngay, không tween
++      s.cur = Array.from({ length: chart.data.labels.length }, (_, i) => (i === next ? 1 : 0));
++      chart.draw();
++      return;
++    }
++    cancelAnimationFrame(s.raf);
++    const tick = () => {
++      let moving = false;
++      const n = chart.data.labels.length;
++      for (let i = 0; i < n; i++) {
++        const goal = i === s.target ? 1 : 0;
++        const cur = s.cur[i] ?? 0;
++        const nv = Math.abs(goal - cur) < 0.02 ? goal : cur + (goal - cur) * 0.28; // easing-out
++        if (nv !== goal) moving = true;
++        s.cur[i] = nv;
++      }
++      chart.draw();
++      if (moving && chart.canvas.isConnected) s.raf = requestAnimationFrame(tick);
++    };
++    s.raf = requestAnimationFrame(tick);
++  },
++  afterDatasetsDraw(chart) {
++    const s = chart.$lift;
++    if (!s) return;
++    const meta = chart.getDatasetMeta(0);
++    const { ctx } = chart;
++    meta.data.forEach((bar, i) => {
++      const p = s.cur[i] ?? 0;
++      if (p <= 0.01) return;
++      const { x, y, base, width } = bar.getProps(["x", "y", "base", "width"], true);
++      const h = Math.abs(base - y);
++      if (h < 1) return; // cột 0 đ: không có gì để nhô lên
++      const w = width * (1 + LIFT_GROW * p);
++      const top = Math.min(y, base) - LIFT_PX * p;
++      const bottom = Math.max(y, base);
++      ctx.save();
++      ctx.shadowColor = `rgba(122, 98, 163, ${0.35 * p})`;
++      ctx.shadowBlur = 14 * p;
++      ctx.shadowOffsetY = 4 * p;
++      const grad = ctx.createLinearGradient(0, top, 0, bottom);
++      grad.addColorStop(0, "#f6c6d6");
++      grad.addColorStop(1, "#f0b0c3");
++      ctx.fillStyle = grad;
++      ctx.beginPath();
++      if (ctx.roundRect) ctx.roundRect(x - w / 2, top, w, bottom - top, [6, 6, 0, 0]);
++      else ctx.rect(x - w / 2, top, w, bottom - top);
++      ctx.fill();
++      ctx.restore();
++    });
++  },
++  beforeDestroy(chart) {
++    if (chart.$lift) cancelAnimationFrame(chart.$lift.raf);
++  },
++};
+ 
+ /** barChartVND(canvas, ['2026-10','2026-11'], [120000, 90000], 'Chi tiêu') */
+ export function barChartVND(canvas, labels, values, label = "Số tiền") {
+@@ -14,9 +84,12 @@ export function barChartVND(canvas, labels, values, label = "Số tiền") {
+         { label, data: values, backgroundColor: "#b6a1d4", hoverBackgroundColor: "#f0b0c3", borderRadius: 6 },
+       ],
+     },
++    plugins: [barHoverLift],
+     options: {
+       responsive: true,
+       maintainAspectRatio: false,
++      layout: { padding: { top: LIFT_PX + 4 } }, // chừa chỗ để cột nhô lên không bị cắt
++      interaction: { mode: "index", intersect: false }, // rê vào vùng cột (kể cả chỗ trống phía trên) vẫn nhận hover
+       plugins: {
+         legend: { display: false },
+         tooltip: { callbacks: { label: (ctx) => formatVND(ctx.parsed.y) } },
+diff --git a/frontend/js/pages/auth-shell.js b/frontend/js/pages/auth-shell.js
+index 63b2a28..6ea815f 100644
+--- a/frontend/js/pages/auth-shell.js
++++ b/frontend/js/pages/auth-shell.js
+@@ -142,6 +142,8 @@ export function mountAuth(el, { mode, title, sub, body }) {
+     countUp(page);
+     tilt(page.querySelector(".auth-visual"));
+     wireMobileSteps(page);
++    // Trang quên/đặt lại mật khẩu (mở từ liên kết email): điện thoại vào thẳng form, không qua màn giới thiệu
++    if (mode === "forgot") page.dataset.step = "form";
+   }
+ 
+   const prev = page.dataset.mode;
+diff --git a/frontend/js/pages/forgot.js b/frontend/js/pages/forgot.js
+new file mode 100644
+index 0000000..f09c46f
+--- /dev/null
++++ b/frontend/js/pages/forgot.js
+@@ -0,0 +1,65 @@
++// Trang "Quên mật khẩu": nhập email -> hệ thống gửi liên kết đặt lại mật khẩu
++import { post } from "../api.js";
++import {
++  clearFieldErrors,
++  esc,
++  formValues,
++  handleFormError,
++  showFieldErrors,
++  withBusy,
++} from "../ui.js";
++import { EMAIL_RE, authField, mountAuth, shakeInvalid } from "./auth-shell.js";
++
++function validate(form, { email }) {
++  clearFieldErrors(form);
++  const errs = [];
++  if (!email.trim()) errs.push({ field: "email", message: "Nhập email đã đăng ký" });
++  else if (!EMAIL_RE.test(email.trim()))
++    errs.push({ field: "email", message: "Email chưa đúng định dạng, ví dụ ten@gmail.com" });
++  showFieldErrors(form, errs);
++  if (errs.length) {
++    shakeInvalid(form);
++    form.elements.email.focus();
++  }
++  return errs.length === 0;
++}
++
++export function render(el) {
++  const remembered = sessionStorage.getItem("forgot_email") ?? "";
++  sessionStorage.removeItem("forgot_email");
++  const body = mountAuth(el, {
++    mode: "forgot",
++    title: "Quên mật khẩu?",
++    sub: "Nhập email đã đăng ký, chúng tôi sẽ gửi liên kết để bạn đặt mật khẩu mới.",
++    body: `<form id="forgot-form" novalidate>
++        ${authField({ label: "Email", name: "email", type: "email", icon: "mail", placeholder: "ten@gmail.com", autocomplete: "email", value: remembered })}
++        <button class="auth-submit" type="submit">Gửi liên kết đặt lại mật khẩu</button>
++      </form>
++      <div id="forgot-result"></div>
++      <p class="auth-switch"><a href="#/login">← Quay lại đăng nhập</a></p>`,
++  });
++
++  const form = body.querySelector("#forgot-form");
++  const result = body.querySelector("#forgot-result");
++  form.elements.email.focus();
++
++  form.onsubmit = async (ev) => {
++    ev.preventDefault();
++    const data = formValues(form);
++    if (!validate(form, data)) return;
++    const btn = form.querySelector(".auth-submit");
++    try {
++      const res = await withBusy(btn, () => post("/auth/forgot-password", { email: data.email.trim() }));
++      // Chỉ chế độ dev (chưa cấu hình SMTP) backend mới trả dev_reset_link để thử không cần email thật
++      result.innerHTML = `<div class="auth-note" role="status">
++          <strong>Đã gửi yêu cầu</strong>
++          <p>${esc(res.message)}</p>
++          ${res.dev_reset_link ? `<p class="auth-note-dev">Chế độ thử nghiệm (chưa cấu hình email): <a href="${esc(res.dev_reset_link)}">bấm vào đây để đặt lại mật khẩu</a></p>` : ""}
++        </div>`;
++      form.querySelector(".auth-submit").textContent = "Gửi lại liên kết";
++    } catch (e) {
++      handleFormError(form, e); // 422 -> đỏ ô email; 429 -> thông báo "thử quá nhiều lần"
++      shakeInvalid(form);
++    }
++  };
++}
+diff --git a/frontend/js/pages/login.js b/frontend/js/pages/login.js
+index 69cbfc1..830e83d 100644
+--- a/frontend/js/pages/login.js
++++ b/frontend/js/pages/login.js
+@@ -52,6 +52,7 @@ export function render(el) {
+         ${authField({ label: "Mật khẩu", name: "password", type: "password", icon: "lock", placeholder: "Mật khẩu của bạn", autocomplete: "current-password", toggle: true })}
+         <div class="auth-row">
+           <label class="auth-check"><input type="checkbox" name="remember" ${remembered ? "checked" : ""}> Ghi nhớ email</label>
++          <a class="auth-link" href="#/forgot-password" id="forgot-link">Quên mật khẩu?</a>
+         </div>
+         <button class="auth-submit" type="submit">Đăng nhập</button>
+       </form>
+@@ -67,6 +68,11 @@ export function render(el) {
+ 
+   const form = body.querySelector("#login-form");
+   wirePasswordFields(form);
++  // Đã nhập email thì mang sang trang quên mật khẩu cho đỡ gõ lại
++  body.querySelector("#forgot-link").addEventListener("click", () => {
++    const e = form.elements.email.value.trim();
++    if (e) sessionStorage.setItem("forgot_email", e);
++  });
+   (remembered ? form.elements.password : form.elements.email).focus();
+ 
+   body.querySelector("#fill-demo")?.addEventListener("click", () => {
+diff --git a/frontend/js/pages/reset.js b/frontend/js/pages/reset.js
+new file mode 100644
+index 0000000..bf7956b
+--- /dev/null
++++ b/frontend/js/pages/reset.js
+@@ -0,0 +1,68 @@
++// Trang "Đặt mật khẩu mới": mở từ liên kết trong email (#/reset-password/<token>)
++import { post } from "../api.js";
++import { navigate } from "../router.js";
++import {
++  clearFieldErrors,
++  formValues,
++  handleFormError,
++  showFieldErrors,
++  toast,
++  withBusy,
++} from "../ui.js";
++import { authField, mountAuth, shakeInvalid, showSuccess, wirePasswordFields } from "./auth-shell.js";
++
++function validate(form, d) {
++  clearFieldErrors(form);
++  const errs = [];
++  if (d.password.length < 6) errs.push({ field: "password", message: "Mật khẩu cần ít nhất 6 ký tự" });
++  else if (d.password.length > 72) errs.push({ field: "password", message: "Mật khẩu tối đa 72 ký tự" });
++  if (!d.password2) errs.push({ field: "password2", message: "Nhập lại mật khẩu mới" });
++  else if (d.password2 !== d.password) errs.push({ field: "password2", message: "Mật khẩu nhập lại không khớp" });
++  showFieldErrors(form, errs);
++  if (errs.length) {
++    shakeInvalid(form);
++    form.elements[errs[0].field].focus();
++  }
++  return errs.length === 0;
++}
++
++export function render(el, { token } = {}) {
++  const body = mountAuth(el, {
++    mode: "forgot",
++    title: "Đặt mật khẩu mới",
++    sub: "Chọn mật khẩu mới cho tài khoản của bạn. Liên kết chỉ dùng được một lần.",
++    body: `<form id="reset-form" novalidate>
++        ${authField({ label: "Mật khẩu mới", name: "password", type: "password", icon: "lock", placeholder: "Ít nhất 6 ký tự", autocomplete: "new-password", toggle: true })}
++        ${authField({ label: "Nhập lại mật khẩu mới", name: "password2", type: "password", icon: "lock", placeholder: "Nhập lại mật khẩu mới", autocomplete: "new-password", toggle: true })}
++        <button class="auth-submit" type="submit">Đặt lại mật khẩu</button>
++      </form>
++      <p class="auth-switch"><a href="#/login">← Quay lại đăng nhập</a></p>`,
++  });
++
++  const form = body.querySelector("#reset-form");
++  wirePasswordFields(form);
++  form.elements.password.focus();
++
++  form.onsubmit = async (ev) => {
++    ev.preventDefault();
++    const d = formValues(form);
++    if (!validate(form, d)) return;
++    const btn = form.querySelector(".auth-submit");
++    try {
++      await withBusy(btn, () => post("/auth/reset-password", { token, new_password: d.password }));
++      await showSuccess(btn, "Đã đặt lại mật khẩu");
++      navigate("/login"); // chuyển trang trước, thông báo sau
++      toast.success("Đã đặt lại mật khẩu, hãy đăng nhập bằng mật khẩu mới");
++    } catch (e) {
++      if (e.code === "RESET_TOKEN_INVALID") {
++        // Liên kết hết hạn / đã dùng: báo rõ và mời xin liên kết mới
++        showFieldErrors(form, [{ field: "password", message: e.message }]);
++        body.querySelector(".auth-switch").innerHTML =
++          '<a href="#/forgot-password">Gửi lại liên kết đặt mật khẩu mới</a> · <a href="#/login">Đăng nhập</a>';
++      } else {
++        handleFormError(form, e);
++      }
++      shakeInvalid(form);
++    }
++  };
++}
