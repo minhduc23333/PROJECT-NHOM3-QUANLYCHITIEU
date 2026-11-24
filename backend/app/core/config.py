@@ -37,11 +37,11 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     # Model đọc hóa đơn: ưu tiên độ chính xác hơn tốc độ. Thử lần lượt GEMINI_MODEL rồi GEMINI_FALLBACK_MODELS
     # (model nào key không có quyền / chưa tồn tại sẽ tự bị bỏ qua).
-    GEMINI_MODEL: str = "gemini-4-argon"
-    GEMINI_FALLBACK_MODELS: str = "gemini-3.1-pro-preview,gemini-3.8-flash,gemini-3.5-flash"
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_FALLBACK_MODELS: str = "gemini-2.5-flash-lite,gemini-2.0-flash"
     GEMINI_THINKING_LEVEL: str = "high"   # low | medium | high (suy nghĩ kỹ hơn = đọc số chuẩn hơn, chậm hơn)
-    GEMINI_CALL_TIMEOUT_SEC: float = 150.0    # tối đa cho 1 lượt gọi model
-    GEMINI_TOTAL_BUDGET_SEC: float = 280.0    # tối đa cho toàn bộ 1 lần đọc (gồm các lượt tự kiểm toán)
+    GEMINI_CALL_TIMEOUT_SEC: float = 18.0     # tối đa cho 1 lượt gọi model (fail-fast khi model nghẽn/503)
+    GEMINI_TOTAL_BUDGET_SEC: float = 45.0     # tối đa cho toàn bộ 1 lần đọc (gồm fallback & tự kiểm toán)
 
     @property
     def cors_list(self) -> list[str]:
