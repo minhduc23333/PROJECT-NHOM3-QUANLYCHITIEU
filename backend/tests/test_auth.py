@@ -51,4 +51,13 @@ def test_login_wrong_password_and_unknown_email_same_message(client):
 def test_me_requires_valid_token(client):
     assert client.get("/api/auth/me").status_code == 401
     assert client.get("/api/auth/me", headers={"Authorization": "Bearer rac"}).status_code == 401
-    
+
+
+def test_password_reset_endpoints_are_removed(client):
+    forgotten = client.post("/api/auth/forgot-password", json={"email": VALID["email"]})
+    reset = client.post(
+        "/api/auth/reset-password",
+        json={"token": "token-does-not-matter", "new_password": "matkhau456"},
+    )
+    assert forgotten.status_code in {404, 405}
+    assert reset.status_code in {404, 405}
