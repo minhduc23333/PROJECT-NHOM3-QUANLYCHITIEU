@@ -19,6 +19,7 @@ import * as upload from "./pages/upload.js";
 import * as review from "./pages/review.js";
 import * as split from "./pages/split.js";
 import * as debts from "./pages/debts.js";
+import * as reports from "./pages/reports.js";
 import * as notFound from "./pages/notfound.js";
 import * as uiDemo from "./pages/ui-demo.js";
 
@@ -34,6 +35,7 @@ addRoute("/receipts/new", upload.render);
 addRoute("/receipts/:id", review.render);
 addRoute("/receipts/:id/split", split.render);
 addRoute("/debts", debts.render);
+addRoute("/reports", reports.render);
 addRoute("/dev/ui", uiDemo.render);
 
 let renderSeq = 0;
