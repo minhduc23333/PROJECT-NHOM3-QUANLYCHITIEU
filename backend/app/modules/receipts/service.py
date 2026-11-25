@@ -47,6 +47,18 @@ def list_group_receipts(db: Session, user: User, group_id: int) -> list[ReceiptO
     ]
 
 
+def list_personal_receipts(db: Session, user: User) -> list[ReceiptOut]:
+    rows = db.scalars(
+        select(Receipt)
+        .where(Receipt.group_id.is_(None), Receipt.uploaded_by == user.id)
+        .order_by(Receipt.created_at.desc(), Receipt.id.desc())
+    )
+    return [
+        ReceiptOut.model_validate(receipt).model_copy(update={"can_delete": True})
+        for receipt in rows
+    ]
+
+
 ZERO = Decimal(0)
 CENT = Decimal("0.01")
 MAX_MONEY = Decimal(10) ** 13  # DECIMAL(15,2) chứa được < 10^13

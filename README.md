@@ -194,6 +194,7 @@ Lỗi luôn có dạng: `{"error": {"code", "message", "details"}}`.
 |---|---|---|
 | GET | `/api/groups/{id}/receipts` | Hóa đơn của nhóm |
 | POST | `/api/groups/{id}/receipts` | Tải ảnh JPG/PNG (≤ 5 MB, kiểm tra magic bytes, không tin MIME từ client; người tải phải là thành viên ACTIVE) → `DRAFT`. Sai định dạng → 400, quá cỡ → 413 |
+| GET | `/api/receipts/personal` | Danh sách hóa đơn cá nhân của người dùng hiện tại |
 | POST | `/api/receipts/personal` | Như trên nhưng là hóa đơn cá nhân (không cần nhóm, chỉ chủ tài khoản xem được) |
 | GET | `/api/receipts/category-suggestion` | Gợi ý danh mục theo `merchant_name` (không khớp → "Khác") |
 | POST | `/api/ocr/receipts/{id}` | Chạy OCR, điền cửa hàng / ngày / tiền + dòng món. OCR lỗi vẫn trả 200 với `ocr_status=FAILED` để nhập tay. Chỉ người tải lên |

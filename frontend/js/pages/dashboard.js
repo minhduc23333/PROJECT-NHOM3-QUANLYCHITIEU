@@ -49,11 +49,8 @@ const CSS = `
   background: #fff; text-decoration: none; color: var(--ink); transition: box-shadow .15s, transform .15s; }
 .g-chip:hover { box-shadow: 0 10px 22px -14px rgba(122,98,163,.5); transform: translateY(-1px); color: var(--ink); }
 .g-ava { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: .75rem; background: #e9ddf7; color: #6c56a0; flex: none; }
-.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.steps li { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; background: #fff; border: 1px solid var(--line); }
-.step-n { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; flex: none; background: var(--mist); color: #6c56a0; }
-.steps li.done .step-n { background: #dff3ea; color: #2f7a5a; }
-.steps li.done .step-t { color: var(--muted); text-decoration: line-through; }
+.dash-onboarding { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 14px; background: #fff; border: 1px solid var(--line); }
+.dash-onboarding .stat-ico { width: 38px; height: 38px; border-radius: 12px; }
 .link-more { color: #7a62a3; font-weight: 600; text-decoration: none; font-size: .9rem; }
 .link-more:hover { text-decoration: underline; }
 @media (max-width: 575.98px) {
@@ -86,11 +83,6 @@ const initials = (name = "") => {
   const p = String(name).trim().split(/\s+/).filter(Boolean);
   return p.length ? (p[0][0] + (p.length > 1 ? p[p.length - 1][0] : "")).toUpperCase() : "?";
 };
-function greeting() {
-  const h = new Date().getHours();
-  return h < 11 ? "Chào buổi sáng" : h < 14 ? "Chào buổi trưa" : h < 18 ? "Chào buổi chiều" : "Chào buổi tối";
-}
-
 const stat = (tone, icon, label, value, sub = "", valueCls = "") => `
   <div class="col-6 col-xl-3"><div class="card h-100"><div class="stat">
     <span class="stat-ico ${tone}">${icon}</span>
@@ -108,24 +100,13 @@ function balanceStat(s) {
   return stat("t-mint", ICONS.scale, "Số dư công nợ", formatVND(0), "Không ai nợ ai 🎉");
 }
 
-function onboarding(groups, s) {
-  const hasGroup = groups.length > 0;
-  const hasMember = groups.some((g) => num(g.member_count) > 1);
-  const hasSettled = num(s.receipt_count) > 0;
-  const step = (done, n, text, href, cta) => `
-    <li class="${done ? "done" : ""}">
-      <span class="step-n">${done ? "✓" : n}</span>
-      <span class="step-t flex-grow-1">${esc(text)}</span>
-      ${done ? "" : `<a class="link-more" href="${href}">${esc(cta)} →</a>`}
-    </li>`;
+function onboarding() {
   return `<div class="card mb-4"><div class="card-body">
-    <h5 class="card-title mb-1">Bắt đầu chia tiền trong 3 bước</h5>
-    <p class="text-muted small mb-3">Số liệu ở trang này được tính từ các hóa đơn đã chốt.</p>
-    <ol class="steps">
-      ${step(hasGroup, 1, "Tạo một nhóm (phòng trọ, chuyến đi, bạn bè...)", "#/groups", "Tạo nhóm")}
-      ${step(hasMember, 2, "Thêm bạn bè vào nhóm bằng email", "#/groups", "Thêm thành viên")}
-      ${step(hasSettled, 3, "Tải ảnh hóa đơn, xác nhận và chốt hóa đơn đầu tiên", "#/receipts", "Thêm hóa đơn")}
-    </ol>
+    <div class="dash-onboarding">
+      <span class="stat-ico t-lav">${ICONS.receipt}</span>
+      <span class="flex-grow-1 fw-semibold">Bắt đầu với hóa đơn đầu tiên của bạn</span>
+      <a class="link-more" href="#/receipts">Thêm hóa đơn →</a>
+    </div>
   </div></div>`;
 }
 
@@ -148,18 +129,18 @@ function categoryChart(canvas, cats) {
 }
 
 function recentList(rows) {
-  if (!rows.length) return '<div class="dash-empty" style="height:auto;min-height:140px">Chưa có hóa đơn nào được chốt.</div>';
+  if (!rows.length) return '<div class="dash-empty" style="height:auto;min-height:140px">Chưa có hóa đơn nào.</div>';
   return `<ul class="recent-list">${rows
     .map(
       (r) => `<li>
         <span class="r-ico">${esc(initials(r.merchant_name || "HĐ"))}</span>
         <div class="flex-grow-1" style="min-width:0">
-          <div class="fw-semibold text-truncate">${esc(r.merchant_name || "Hóa đơn chưa có tên")}</div>
-          <div class="text-muted small text-truncate r-sub">${esc(r.group_name || "Cá nhân")} · ${formatDate(r.receipt_date)}${r.category ? ` · ${esc(r.category)}` : ""}</div>
+          <div class="fw-semibold text-truncate"><a class="text-reset text-decoration-none" href="#/receipts/${r.id}">${esc(r.merchant_name || "Hóa đơn chưa có tên")}</a></div>
+          <div class="text-muted small text-truncate r-sub">${esc(r.group_name || "Cá nhân")} · ${formatDate(r.receipt_date ?? r.created_at)}${r.category ? ` · ${esc(r.category)}` : ""}</div>
         </div>
         <div class="text-end flex-shrink-0">
           <div class="fw-semibold">${formatVND(r.total_amount)}</div>
-          <div class="r-mine">Phần tôi: ${formatVND(r.my_amount)}</div>
+          <div class="r-mine">${r.status === "SETTLED" ? `Phần tôi: ${formatVND(r.my_amount)}` : ({ DRAFT: "Nháp", VERIFIED: "Đã xác nhận" }[r.status] ?? esc(r.status))}</div>
         </div>
       </li>`,
     )
@@ -186,7 +167,7 @@ export function render(el) {
   el.innerHTML = `<div class="page-dash">
     <section class="dash-hero mb-4 d-flex flex-wrap align-items-center justify-content-between gap-3">
       <div style="position:relative;z-index:1">
-        <h2>${greeting()}${name ? `, ${esc(name)}` : ""} 👋</h2>
+        <h2>Chào${name ? `, ${esc(name)}` : ""} 👋</h2>
         <p>Tổng quan chi tiêu và công nợ của bạn</p>
       </div>
       <div class="dash-actions d-flex flex-wrap gap-2" style="position:relative;z-index:1">
@@ -205,7 +186,7 @@ export function render(el) {
       const monthly = s.monthly ?? [];
       const cats = (s.by_category ?? []).filter((c) => num(c.total) > 0);
       const recent = [...(s.recent_receipts ?? [])].sort(
-        (a, b) => new Date(b.receipt_date ?? 0) - new Date(a.receipt_date ?? 0),
+        (a, b) => new Date(b.receipt_date ?? b.created_at ?? 0) - new Date(a.receipt_date ?? a.created_at ?? 0),
       );
       const hasSpend = monthly.some((m) => num(m.total) > 0);
       const monthlyTotal = monthly.reduce((total, m) => total + num(m.total), 0);
@@ -216,10 +197,10 @@ export function render(el) {
           ${stat("t-lav", ICONS.wallet, "Tôi đã chi", formatVND(s.personal_spent ?? s.total_spent), "Phần của tôi trong các hóa đơn")}
           ${stat("t-peach", ICONS.group, "Nhóm đã chi", formatVND(s.group_spent ?? 0), `${num(s.group_count)} nhóm đang tham gia`)}
           ${balanceStat(s)}
-          ${stat("t-pink", ICONS.receipt, "Hóa đơn đã chốt", num(s.receipt_count), `Nợ: ${formatVND(s.i_owe)} · Được nợ: ${formatVND(s.owed_to_me)}`)}
+          ${stat("t-pink", ICONS.receipt, "Hóa đơn", num(s.total_receipt_count), `${num(s.receipt_count)} đã chốt`)}
         </div>
 
-        ${num(s.receipt_count) === 0 ? onboarding(groups, s) : ""}
+        ${num(s.total_receipt_count) === 0 ? onboarding() : ""}
 
         <div class="row g-3 mb-4">
           <div class="col-lg-7"><div class="card h-100"><div class="card-body">
@@ -227,7 +208,7 @@ export function render(el) {
               <h5 class="card-title mb-0">Chi tiêu của tôi, 6 tháng gần nhất</h5>
               <a class="link-more" href="#/reports">Xem báo cáo →</a>
             </div>
-            <p class="text-muted small mb-2">Tổng trong 6 tháng: ${formatVND(monthlyTotal)} · Tổng chi và danh mục tính mọi hóa đơn đã chốt.</p>
+            <p class="text-muted small mb-2">Tổng trong 6 tháng: ${formatVND(monthlyTotal)} · Hóa đơn nhóm đã chốt và hóa đơn cá nhân đã xác nhận.</p>
             ${hasSpend ? '<div class="dash-chart"><canvas id="chart-monthly"></canvas></div>'
                        : '<div class="dash-empty">Chưa có chi tiêu nào trong 6 tháng qua.<br>Biểu đồ sẽ hiện khi có hóa đơn được chốt.</div>'}
           </div></div></div>

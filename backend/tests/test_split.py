@@ -261,7 +261,7 @@ def test_finalize_blocked_when_items_unselected(client, team):
     pick(client, team, "A", rid, a)
     r = finalize(client, team, rid)
     assert r.status_code == 422
-    assert any("chưa có ai chọn" in d["message"] and f"id {b}" in d["message"] for d in r.json()["error"]["details"])
+    assert any("Món 'B' chưa có ai chọn" == d["message"] for d in r.json()["error"]["details"])
     with SessionLocal() as db:  # không ghi gì nửa vời
         assert db.get(Receipt, rid).status == "VERIFIED"
         assert db.scalar(select(func.count()).select_from(SplitDetail)) == 0

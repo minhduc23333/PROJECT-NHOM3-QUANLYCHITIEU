@@ -190,7 +190,9 @@ export function render(el, params) {
     } catch (e) {
       toast.error(e);
     }
-    if (!groups.some((g) => String(g.id) === String(state.groupId))) state.groupId = groups[0]?.id ?? "personal";
+    if (state.groupId !== "personal" && !groups.some((g) => String(g.id) === String(state.groupId))) {
+      state.groupId = groups[0]?.id ?? "personal";
+    }
 
     stage.innerHTML = `<div class="card"><div class="card-body">
       <form id="pick-form" novalidate>

@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel
@@ -20,23 +20,26 @@ class RecentReceipt(BaseModel):
     group_name: str | None = None
     merchant_name: str | None = None
     receipt_date: date | None = None
+    created_at: datetime | None = None
     category: str | None = None
+    status: str
     total_amount: Decimal | None = None   # tổng hóa đơn
     my_amount: Decimal                    # phần của tôi (final_amount); 0 nếu tôi không tham gia
 
 
 class DashboardSummary(BaseModel):
-    """Chỉ tính hóa đơn SETTLED trong phạm vi quyền của người dùng; không có dữ liệu thì trả 0 / danh sách rỗng."""
+    """Chi tiêu gồm hóa đơn nhóm SETTLED và hóa đơn cá nhân VERIFIED/SETTLED; danh sách gần đây gồm mọi hóa đơn được xem."""
 
     group_count: int                  # nhóm tôi đang là thành viên ACTIVE
     receipt_count: int                # số hóa đơn SETTLED (nhóm của tôi + hóa đơn cá nhân)
-    personal_spent: Decimal           # Σ final_amount của tôi (+ total_amount hóa đơn cá nhân)
+    total_receipt_count: int           # mọi hóa đơn trong nhóm đang tham gia + hóa đơn cá nhân của tôi
+    personal_spent: Decimal           # Σ final_amount nhóm đã chốt + total_amount hóa đơn cá nhân đã xác nhận
     group_spent: Decimal              # Σ total_amount hóa đơn SETTLED thuộc các nhóm của tôi
     i_owe: Decimal                    # tôi đang nợ người khác (debts OPEN)
     owed_to_me: Decimal               # người khác đang nợ tôi (debts OPEN)
     monthly: list[MonthTotal]         # chi tiêu cá nhân 6 tháng gần nhất (biểu đồ cột)
     by_category: list[CategoryTotal]  # chi tiêu cá nhân theo danh mục, giảm dần (biểu đồ tròn)
-    recent_receipts: list[RecentReceipt]  # 5 hóa đơn SETTLED gần nhất
+    recent_receipts: list[RecentReceipt]  # 5 hóa đơn gần đây nhất trong phạm vi quyền
 
 
 # ---------- Báo cáo chi tiêu theo thời gian / danh mục (T05E180) ----------
@@ -63,7 +66,7 @@ class ReportMerchant(BaseModel):
 
 
 class SpendingReport(BaseModel):
-    """Chỉ tính hóa đơn SETTLED trong phạm vi quyền của người dùng (giống Dashboard)."""
+    """Nhóm tính SETTLED; phần của tôi còn tính hóa đơn cá nhân VERIFIED/SETTLED."""
 
     date_from: date
     date_to: date

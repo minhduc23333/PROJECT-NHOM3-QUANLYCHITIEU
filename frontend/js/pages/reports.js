@@ -1,5 +1,5 @@
 // T05E180 - UI-08: Báo cáo chi tiêu theo thời gian / danh mục (#/reports)
-// Dữ liệu: GET /api/dashboard/report (chỉ hóa đơn SETTLED). Biểu đồ dùng Chart.js (vendor/chart.umd.js).
+// Dữ liệu: GET /api/dashboard/report. Biểu đồ dùng Chart.js (vendor/chart.umd.js).
 import { get } from "../api.js";
 import { formatVND, formatVNDShort } from "../format.js";
 import { emptyHTML, esc, toast } from "../ui.js";
@@ -127,7 +127,7 @@ export function render(el, params) {
       <span class="page-title-ico" aria-hidden="true">${ICON}</span>
       <div class="flex-grow-1">
         <h2 class="page-title mb-0">Báo cáo chi tiêu</h2>
-        <div class="text-muted">Theo thời gian và danh mục · chỉ tính hóa đơn <b>đã chốt chia</b></div>
+        <div class="text-muted">Phần của tôi gồm hóa đơn cá nhân đã xác nhận; cả nhóm gồm hóa đơn nhóm đã chốt chia</div>
       </div>
       <button type="button" class="btn btn-soft" id="btn-csv" disabled>⤓ Tải CSV</button>
     </div>
@@ -248,8 +248,13 @@ export function render(el, params) {
     csvBtn.disabled = total === 0;
     const rangeText = `${fmtDate(r.date_from)} – ${fmtDate(r.date_to)}`;
     if (total === 0) {
+      const emptyText = state.scope === "me"
+        ? state.groupId
+          ? `Chưa có phần chi tiêu của bạn trong hóa đơn nhóm đã chốt trong khoảng ${rangeText}.`
+          : `Chưa có hóa đơn cá nhân đã xác nhận hoặc phần hóa đơn nhóm đã chốt trong khoảng ${rangeText}.`
+        : `Chưa có hóa đơn nhóm đã chốt chia nào trong khoảng ${rangeText}${state.groupId ? " của nhóm này" : ""}.`;
       box.innerHTML = `<div class="card"><div class="card-body">${emptyHTML(
-        `Chưa có hóa đơn đã chốt chia nào trong khoảng ${rangeText}${state.groupId ? " của nhóm này" : ""}. Báo cáo chỉ tính các hóa đơn đã được Trưởng nhóm chốt chia.`,
+        emptyText,
         { actionText: "Xem hóa đơn", actionHref: "#/receipts" },
       )}</div></div>`;
       return;
@@ -273,7 +278,7 @@ export function render(el, params) {
       <div class="rp-note mb-2">${rangeText} · ${r.scope === "me" ? "phần chi tiêu của bạn" : "tổng tiền hóa đơn của nhóm"} · gom theo ${unit}</div>
       <div class="row g-3 mb-3">
         <div class="col-6 col-xl-3"><div class="card kpi"><div class="lbl">Tổng chi</div><div class="val">${formatVND(total)}</div><div class="sub keep">${delta}</div></div></div>
-        <div class="col-6 col-xl-3"><div class="card kpi"><div class="lbl">Số hóa đơn</div><div class="val">${r.receipt_count}</div><div class="sub">đã chốt chia</div></div></div>
+        <div class="col-6 col-xl-3"><div class="card kpi"><div class="lbl">Số hóa đơn</div><div class="val">${r.receipt_count}</div><div class="sub">${state.scope === "me" ? "nhóm đã chốt + cá nhân đã xác nhận" : "nhóm đã chốt chia"}</div></div></div>
         <div class="col-6 col-xl-3"><div class="card kpi"><div class="lbl">Trung bình mỗi ${unit}</div><div class="val">${formatVND(r.average_per_period)}</div><div class="sub">${unit} cao nhất: ${esc(peak.label)} (${formatVNDShort(peak.total)})</div></div></div>
         <div class="col-6 col-xl-3"><div class="card kpi"><div class="lbl">Danh mục lớn nhất</div><div class="val text-truncate">${esc(top.category)}</div><div class="sub">${top.percent}% · ${formatVND(top.total)}</div></div></div>
       </div>

@@ -1,4 +1,4 @@
-"""Số liệu Dashboard (T05E17D). Chỉ tính hóa đơn SETTLED, trong phạm vi quyền của người dùng.
+"""Số liệu Dashboard (T05E17D). Chi tiêu nhóm tính hóa đơn SETTLED, hóa đơn cá nhân tính VERIFIED trở lên.
 
 Phạm vi quyền:
   - hóa đơn nhóm: chỉ các nhóm mà người dùng là thành viên ACTIVE (bị REMOVED thì không thấy nữa);
@@ -6,7 +6,7 @@ Phạm vi quyền:
 
 Cách tính (SRS FR-12):
   - chi tiêu cá nhân = Σ split_details.final_amount của tôi trên hóa đơn nhóm SETTLED
-                       + Σ total_amount các hóa đơn cá nhân SETTLED của tôi (không chia với ai);
+                       + Σ total_amount hóa đơn cá nhân VERIFIED/SETTLED (không chia với ai);
   - chi tiêu nhóm    = Σ total_amount các hóa đơn SETTLED thuộc nhóm của tôi
                        (không cộng vào chi tiêu cá nhân).
 Gom theo tháng/danh mục bằng Python để chạy được cả MySQL lẫn SQLite (test).
@@ -49,11 +49,21 @@ def summary(db: Session, user: User) -> DashboardSummary:
     active_groups = select(GroupMember.group_id).where(
         GroupMember.user_id == user.id, GroupMember.status == "ACTIVE"
     )
+    my_group_receipts = Receipt.group_id.in_(active_groups)
+    my_personal_receipts = and_(Receipt.group_id.is_(None), Receipt.uploaded_by == user.id)
     in_my_groups = and_(Receipt.status == SETTLED, Receipt.group_id.in_(active_groups))
-    my_personal = and_(Receipt.status == SETTLED, Receipt.group_id.is_(None), Receipt.uploaded_by == user.id)
+    my_personal_settled = and_(
+        Receipt.status == SETTLED, Receipt.group_id.is_(None), Receipt.uploaded_by == user.id
+    )
+    my_personal_spent = and_(
+        Receipt.status.in_(("VERIFIED", SETTLED)), Receipt.group_id.is_(None), Receipt.uploaded_by == user.id
+    )
 
     group_count = db.scalar(select(func.count()).select_from(active_groups.subquery())) or 0
-    receipt_count = db.scalar(select(func.count(Receipt.id)).where(or_(in_my_groups, my_personal))) or 0
+    receipt_count = db.scalar(select(func.count(Receipt.id)).where(or_(in_my_groups, my_personal_settled))) or 0
+    total_receipt_count = db.scalar(
+        select(func.count(Receipt.id)).where(or_(my_group_receipts, my_personal_receipts))
+    ) or 0
     group_spent = db.scalar(select(func.sum(Receipt.total_amount)).where(in_my_groups)) or ZERO
     i_owe = db.scalar(select(func.sum(Debt.amount)).where(Debt.debtor_id == user.id, Debt.status == "OPEN")) or ZERO
     owed_to_me = db.scalar(select(func.sum(Debt.amount)).where(Debt.creditor_id == user.id, Debt.status == "OPEN")) or ZERO
@@ -67,7 +77,9 @@ def summary(db: Session, user: User) -> DashboardSummary:
         .where(in_my_groups)
     ).all()
     personal = db.execute(
-        select(Receipt.id, Receipt.receipt_date, Receipt.created_at, Receipt.category, Receipt.total_amount).where(my_personal)
+        select(Receipt.id, Receipt.receipt_date, Receipt.created_at, Receipt.category, Receipt.total_amount).where(
+            my_personal_spent
+        )
     ).all()
     for rid, r_date, created, category, amount in [*shared, *personal]:
         when = r_date or (created.date() if created else None)
@@ -88,7 +100,7 @@ def summary(db: Session, user: User) -> DashboardSummary:
         select(Receipt, Group.name)
         .select_from(Receipt)
         .outerjoin(Group, Group.id == Receipt.group_id)
-        .where(or_(in_my_groups, my_personal))
+        .where(or_(my_group_receipts, my_personal_receipts))
         .order_by(Receipt.created_at.desc(), Receipt.id.desc())
         .limit(RECENT_LIMIT)
     ).all()
@@ -99,7 +111,9 @@ def summary(db: Session, user: User) -> DashboardSummary:
             group_name=group_name,
             merchant_name=r.merchant_name,
             receipt_date=r.receipt_date,
+            created_at=r.created_at,
             category=r.category,
+            status=r.status,
             total_amount=r.total_amount,
             my_amount=my_amount.get(r.id, ZERO),
         )
@@ -109,6 +123,7 @@ def summary(db: Session, user: User) -> DashboardSummary:
     return DashboardSummary(
         group_count=group_count,
         receipt_count=receipt_count,
+        total_receipt_count=total_receipt_count,
         personal_spent=personal_spent,
         group_spent=group_spent,
         i_owe=i_owe,

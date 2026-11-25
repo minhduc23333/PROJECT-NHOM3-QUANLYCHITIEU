@@ -127,14 +127,6 @@ const CSS = `
 .sl-name { min-width:0; }
 .sl-detail { font-size:.75rem; color:var(--muted); margin-top:4px; }
 .sl-total { font-weight:800; font-size:1.05rem; white-space:nowrap; }
-.share-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap:12px; }
-.share-card { border:1px solid var(--line); border-radius:16px; background:#fff; padding:14px 16px; }
-.share-card.me { background:linear-gradient(160deg,#fbf6ff 0%,#fff 70%); border-color:#d9c9ef; }
-.share-total { font-size:1.4rem; font-weight:800; letter-spacing:-.02em; }
-.share-bar { height:6px; border-radius:999px; background:#efeaf6; overflow:hidden; margin:6px 0 10px; }
-.share-bar i { display:block; height:100%; background:linear-gradient(90deg,#f0b0c3,#b6a1d4); }
-.share-rows { display:flex; justify-content:space-between; font-size:.82rem; color:var(--muted); padding:2px 0; }
-.share-rows span:last-child { color:var(--ink); }
 .share-sum { text-align:right; font-size:.85rem; color:var(--muted); }
 @media (max-width: 767.98px) {
   .pick-row { grid-template-columns: 1fr auto; }
@@ -144,11 +136,9 @@ const CSS = `
 @media (max-width: 575.98px) {
   .mx-items-wrap { display:none; }
   .pill { font-size:.82rem; }
-  .share-grid { grid-template-columns: 1fr 1fr; }
   .sl-row { grid-template-columns: 34px 1fr auto; }
   .sl-bar { grid-column: 1 / -1; grid-row: 2; }
   .sl-total { grid-column: 3; grid-row: 1; }
-  .share-total { font-size:1.15rem; }
 }
 .page-split { --line:#e7e1ef; --mist:#f7f4fb; }
 .sp-header { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:16px; align-items:center; padding:4px 0 16px; }
@@ -178,12 +168,11 @@ const CSS = `
 .sp-jump { padding:0; border:0; background:none; color:var(--brand-dark); font-weight:650; text-decoration:underline; text-underline-offset:2px; }
 .sp-jump:hover { color:#56417f; }
 .sp-tip { margin:0 0 12px; color:var(--muted); font-size:.82rem; }
-.sp-tip summary, .sp-member-details summary, .sp-debts summary { width:max-content; cursor:pointer; color:var(--brand-dark); font-weight:600; }
+.sp-tip summary, .sp-debts summary { width:max-content; cursor:pointer; color:var(--brand-dark); font-weight:600; }
 .sp-tip[open] > div { padding:8px 0 0; }
 .pk-toolbar { margin-bottom:10px; }
 .pk-seg button { min-height:36px; }
-.pk-seg button:focus-visible, .sp-jump:focus-visible, .sp-tip summary:focus-visible,
-.sp-member-details summary:focus-visible, .sp-debts summary:focus-visible {
+.pk-seg button:focus-visible, .sp-jump:focus-visible, .sp-tip summary:focus-visible, .sp-debts summary:focus-visible {
   outline:3px solid rgba(122,98,163,.35); outline-offset:2px; border-radius:5px;
 }
 .pick-list { gap:7px; margin-bottom:0 !important; }
@@ -201,7 +190,6 @@ const CSS = `
 .pk-legend { gap:7px 10px; font-size:.75rem; }
 .pk-legend .pill.demo { padding:1px 6px; }
 .sp-share-head { padding-bottom:12px; }
-.sp-share-head .pk-seg { flex:none; }
 .sp-share-list { display:grid; gap:4px; }
 .sl-row { grid-template-columns:32px minmax(0,1fr) auto; gap:8px 10px; padding:9px 10px; border:0; border-bottom:1px solid #f1edf5; border-radius:0; }
 .sl-row:last-child { border-bottom:0; }
@@ -210,14 +198,6 @@ const CSS = `
 .sl-details { grid-column:2 / -1; margin-top:-4px; font-size:.78rem; }
 .sl-details summary { width:max-content; cursor:pointer; color:var(--brand-dark); }
 .sl-details .sl-detail { margin-top:4px; }
-.share-grid { grid-template-columns:1fr; gap:6px; margin-bottom:0 !important; }
-.share-card { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 8px; padding:10px 12px; border:0; border-bottom:1px solid #f1edf5; border-radius:0; }
-.share-card.me { border-radius:9px; }
-.share-card > .d-flex { grid-column:1; grid-row:1; margin:0 !important; }
-.share-card > .share-total { grid-column:2; grid-row:1; align-self:center; font-size:.95rem; }
-.share-card > .share-bar { display:none; }
-.share-card > .sp-member-details { grid-column:1 / -1; font-size:.78rem; }
-.share-rows { padding:2px 0; }
 .sp-allocation { padding:14px 16px; }
 .sp-allocation-total { display:flex; justify-content:space-between; align-items:baseline; gap:8px; font-size:.84rem; color:var(--muted); }
 .sp-allocation-total b { color:var(--ink); font-size:1rem; font-variant-numeric:tabular-nums; }
@@ -264,10 +244,6 @@ const CSS = `
   .pick-split { grid-column:1; grid-row:auto; text-align:left; }
   .pick-split span { display:inline; margin-left:5px; }
   .pick-members { grid-column:1; }
-  .sp-share-head { align-items:flex-start; flex-direction:column; }
-  .sp-share-head .pk-seg { width:auto; display:inline-flex; }
-  .sp-share-head .pk-seg button { padding:4px 10px; }
-  .share-card { padding:8px; }
 }
 `;
 function ensureStyles() {
@@ -285,8 +261,8 @@ export function render(el, params) {
   el.innerHTML = `<div class="page-split"><div id="sp"><div class="text-muted p-3">Đang tải...</div></div></div>`;
   const box = el.querySelector("#sp");
   const st = { receipt: null, summary: null, group: null, error: null, result: null, debts: null };
-  // Trạng thái hiển thị (không gửi lên server): lọc món, mở rộng dòng, kiểu xem phần tiền
-  const ui = { filter: "all", showAll: false, expanded: new Set(), shareView: null };
+  // Trạng thái hiển thị (không gửi lên server): lọc món và mở rộng dòng
+  const ui = { filter: "all", showAll: false, expanded: new Set() };
   const MANY = 6; // từ 7 thành viên trở lên: gọn lại, ẩn bớt người chưa chọn
 
   async function load() {
@@ -343,7 +319,6 @@ export function render(el, params) {
       (a, b) => (b.user_id === meId) - (a.user_id === meId) || (b.user_id === r.payer_id) - (a.user_id === r.payer_id) || a.full_name.localeCompare(b.full_name, "vi"),
     );
     const many = cols.length > MANY;
-    const shareView = ui.shareView ?? "list";
     const shownItems = items.filter((i) =>
       ui.filter === "mine" ? selectorsByItem.get(i.id).some((m) => m.user_id === meId) : ui.filter === "free" ? freeIds.has(i.id) : true,
     );
@@ -426,15 +401,11 @@ export function render(el, params) {
                 ${many ? `<label class="pk-switch"><input type="checkbox" id="pk-showall" ${ui.showAll ? "checked" : ""}> Hiện cả người chưa chọn</label>` : ""}
               </div>
               <div class="pk-legend mb-2" aria-label="Trạng thái chọn món">
-<<<<<<< HEAD
-                ${canSelect ? '<span><span class="pill me on demo">✓ Tôi</span> chọn / bỏ chọn</span>' : ""}
-=======
                 ${canManageSelections
                   ? '<span>Trưởng nhóm có thể chọn / bỏ chọn cho mọi thành viên</span>'
                   : canSelect
                     ? '<span><span class="pill me on demo">✓ Tôi</span> chọn / bỏ chọn</span>'
                     : ""}
->>>>>>> 183f54fae0693e6e492861efe8028d57c217a3a6
                 <span>Đã chọn</span><span>Chưa chọn</span>
               </div>
               <div class="pick-list">${shownItems.length ? "" : `<div class="text-muted text-center p-3 pick-row" style="display:block">${ui.filter === "free" ? "Món nào cũng đã có người chọn." : ui.filter === "mine" ? "Bạn chưa chọn món nào." : "Hóa đơn chưa có dòng món."}</div>`}${shownItems
@@ -451,15 +422,9 @@ export function render(el, params) {
                       if (!open && !on && !mine) return "";
                       const name = mine ? "Tôi" : m.full_name;
                       const ava = `<span class="p-ava" aria-hidden="true">${on ? "✓" : esc(initials(m.full_name))}</span>`;
-<<<<<<< HEAD
-                      if (mine && canSelect)
-                        return `<label class="pill me ${on ? "on" : ""}" title="${on ? "Bỏ chọn" : "Chọn"} món này">
-                          <input type="checkbox" class="pill-input" data-item="${i.id}" ${on ? "checked" : ""} aria-label="Tôi đã dùng ${esc(i.item_name)}">${ava}<span>${esc(name)}</span></label>`;
-=======
                       if ((mine && canSelect) || canManageSelections)
                         return `<label class="pill ${mine ? "me" : ""} ${on ? "on" : ""}" title="${on ? "Bỏ chọn" : "Chọn"} món này">
                           <input type="checkbox" class="pill-input" data-item="${i.id}" data-user="${m.user_id}" ${on ? "checked" : ""} aria-label="${mine ? "Tôi" : esc(m.full_name)} đã dùng ${esc(i.item_name)}">${ava}<span>${esc(name)}</span></label>`;
->>>>>>> 183f54fae0693e6e492861efe8028d57c217a3a6
                       return `<span class="pill ${mine ? "me" : ""} ${on ? "on" : ""}" title="${esc(m.full_name)} ${on ? "đã chọn" : "chưa chọn"}">${ava}<span>${esc(name)}</span></span>`;
                     })
                     .join("");
@@ -485,13 +450,9 @@ export function render(el, params) {
           <section class="sp-panel" aria-labelledby="sp-shares-title">
             <div class="sp-panel-head sp-share-head">
               <h3 class="sp-panel-title" id="sp-shares-title">${settled ? "Số tiền mỗi người" : "Tạm tính mỗi người"}</h3>
-              <div class="pk-seg" role="group" aria-label="Kiểu xem thành viên">
-                <button type="button" data-share="list" aria-pressed="${shareView === "list"}">Danh sách</button>
-                <button type="button" data-share="cards" aria-pressed="${shareView === "cards"}">Thẻ</button>
-              </div>
             </div>
             <div class="sp-panel-body">
-              ${shareView === "list" ? `<div class="sp-share-list">${shareOrder
+              <div class="sp-share-list">${shareOrder
                 .map((m) => {
                   const share = shareOf(m);
                   const pct = num(r.total_amount) ? Math.round((share / num(r.total_amount)) * 100) : 0;
@@ -503,25 +464,7 @@ export function render(el, params) {
                     <details class="sl-details"><summary>Chi tiết</summary><div class="sl-detail">Tiền món ${formatVND(m.item_amount)} · Thuế/phí ${formatVND(m.fee_amount)} · ${pct}% hóa đơn</div></details>
                   </div>`;
                 })
-                .join("")}</div>` : `<div class="share-grid">${shareOrder
-                .map((m) => {
-                  const share = shareOf(m);
-                  const pct = num(r.total_amount) ? Math.round((share / num(r.total_amount)) * 100) : 0;
-                  const tags = [m.user_id === meId ? "Tôi" : "", m.user_id === r.payer_id ? "Ứng tiền" : "", roleOf.get(m.user_id) === "LEADER" ? "Trưởng nhóm" : ""].filter(Boolean);
-                  return `<div class="share-card ${m.user_id === meId ? "me" : ""}">
-                    <div class="d-flex align-items-center gap-2">
-                      <span class="mem-ava" aria-hidden="true">${esc(initials(m.full_name))}</span>
-                      <div style="min-width:0"><div class="fw-semibold text-truncate">${esc(m.full_name)}</div>${tags.length ? `<div class="mem-tag">${tags.join(" · ")}</div>` : ""}</div>
-                    </div>
-                    <div class="share-total">${formatVND(share)}</div>
-                    <details class="sp-member-details"><summary>Chi tiết</summary>
-                      <div class="share-rows"><span>Tiền món</span><span>${formatVND(m.item_amount)}</span></div>
-                      <div class="share-rows"><span>Thuế + phí</span><span>${formatVND(m.fee_amount)}</span></div>
-                      <div class="share-rows"><span>Tỉ lệ</span><span>${pct}%</span></div>
-                    </details>
-                  </div>`;
-                })
-                .join("")}</div>`}
+                .join("")}</div>
               ${result}
             </div>
           </section>
@@ -585,7 +528,6 @@ export function render(el, params) {
     }));
     box.querySelectorAll("[data-expand]").forEach((b) => (b.onclick = () => (ui.expanded.add(Number(b.dataset.expand)), paint())));
     box.querySelectorAll("[data-collapse]").forEach((b) => (b.onclick = () => (ui.expanded.delete(Number(b.dataset.collapse)), paint())));
-    box.querySelectorAll("[data-share]").forEach((b) => (b.onclick = () => ((ui.shareView = b.dataset.share), paint())));
     box.querySelector("#pk-showall")?.addEventListener("change", (e) => ((ui.showAll = e.target.checked), paint()));
     box.querySelector("#btn-reload").onclick = () => {
       st.error = null;

@@ -5,6 +5,7 @@ import { test } from "node:test";
 
 import { formatDate, formatNumber, formatVND, formatVNDShort, parseVND } from "../js/format.js";
 import { dataTable, emptyHTML, errorHTML, esc, field, loadingHTML, moneyField, selectField, successHTML } from "../js/ui.js";
+import { paginateReceipts } from "../js/pages/receipts.js";
 
 const plain = (s) => s.replace(/\u00a0|\u202f/g, " "); // Intl dùng khoảng trắng không ngắt
 
@@ -66,4 +67,13 @@ test("dataTable: canh phải cột tiền, dòng tổng, trạng thái trống",
   assert.match(html, /Phở &lt;b&gt;/);
   assert.match(html, /<tfoot>/);
   assert.match(dataTable(cols, [], { emptyText: "Chưa có món" }), /Chưa có món/);
+});
+
+test("paginateReceipts: tối đa 5 hóa đơn mỗi trang và giới hạn trang hợp lệ", () => {
+  const rows = Array.from({ length: 12 }, (_, i) => i + 1);
+  assert.deepEqual(paginateReceipts(rows, 1).rows, [1, 2, 3, 4, 5]);
+  assert.deepEqual(paginateReceipts(rows, 2).rows, [6, 7, 8, 9, 10]);
+  assert.deepEqual(paginateReceipts(rows, 3).rows, [11, 12]);
+  assert.equal(paginateReceipts(rows, 99).page, 3);
+  assert.deepEqual(paginateReceipts([], 1).rows, []);
 });
