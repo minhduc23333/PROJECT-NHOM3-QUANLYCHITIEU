@@ -1,9 +1,11 @@
-"""Báo cáo chi tiêu theo thời gian / danh mục (T05E180). Chỉ tính hóa đơn SETTLED.
+"""Báo cáo chi tiêu theo thời gian / danh mục (T05E180).
 
-Phạm vi (giống Dashboard T05E17D):
+Phạm vi:
   - scope="me":    phần của tôi = Σ split_details.final_amount trên hóa đơn nhóm
-                   + Σ total_amount hóa đơn cá nhân của tôi (chỉ khi không lọc theo nhóm);
+                   đã SETTLED + Σ total_amount hóa đơn cá nhân VERIFIED/SETTLED của tôi
+                   (chỉ khi không lọc theo nhóm);
   - scope="group": tổng tiền hóa đơn (total_amount) của các nhóm tôi đang là thành viên ACTIVE.
+                   Chỉ tính hóa đơn nhóm SETTLED.
   - group_id: chỉ một nhóm (phải là thành viên ACTIVE: 404 / 403).
 Ngày của hóa đơn = receipt_date, không có thì lấy ngày tạo.
 """
@@ -22,6 +24,7 @@ from app.modules.dashboard.schemas import ReportCategory, ReportMerchant, Report
 
 ZERO = Decimal(0)
 SETTLED = "SETTLED"
+PERSONAL_SPENT_STATUSES = ("VERIFIED", SETTLED)
 DEFAULT_CATEGORY = "Khác"
 MAX_DAYS = 731  # tối đa ~2 năm cho một báo cáo
 TOP_MERCHANTS = 5
@@ -93,7 +96,9 @@ def _rows(db: Session, user: User, scope: str, group_id: int | None):
         if group_id is None:  # hóa đơn cá nhân chỉ thuộc phạm vi "của tôi" khi không lọc nhóm
             rows += db.execute(
                 select(*cols, Receipt.total_amount).where(
-                    Receipt.status == SETTLED, Receipt.group_id.is_(None), Receipt.uploaded_by == user.id
+                    Receipt.status.in_(PERSONAL_SPENT_STATUSES),
+                    Receipt.group_id.is_(None),
+                    Receipt.uploaded_by == user.id,
                 )
             ).all()
     out = []

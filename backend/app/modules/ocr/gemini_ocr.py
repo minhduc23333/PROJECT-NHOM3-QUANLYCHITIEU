@@ -38,13 +38,35 @@ _PLAIN_JSON_MODELS: set[str] = set()
 _LAST_GOOD_MODEL: str | None = None
 _COOLDOWN_SEC = 90.0
 _MAX_MODELS_TRIED = 6          # số model tối đa thử cho 1 lượt đọc
-_MAX_AUDIT_ROUNDS = 2          # số lượt tự kiểm toán lại khi số tiền chưa khớp
+_MAX_AUDIT_ROUNDS = 1          # tối đa 1 lượt tự kiểm toán lại khi số tiền chưa khớp (tránh treo lâu)
 _MAX_IMAGE_SIDE = 2600         # giữ ảnh thật nét (hóa đơn cầm tay/nhàu/chữ nhỏ) - ưu tiên chính xác hơn tốc độ
 _JPEG_QUALITY = 92
 
 
 def _per_call_timeout() -> float:
     return max(20.0, float(settings.GEMINI_CALL_TIMEOUT_SEC))
+
+
+def _normalize_model_name(name: str) -> str:
+    """Chuẩn hóa model ID đọc từ cấu hình .env; ví dụ 'gemini 3.5-flash' -> 'gemini-3.5-flash'."""
+    normalized = (name or "").strip().removeprefix("models/")
+    normalized = re.sub(r"\s+", "-", normalized)
+    normalized = re.sub(r"^gemini(?=[0-9])", "gemini-", normalized, flags=re.IGNORECASE)
+    return normalized.lower()
+
+
+def _configured_models(primary: str) -> list[str]:
+    names = [primary] + [
+        name.strip()
+        for name in (settings.GEMINI_FALLBACK_MODELS or "").split(",")
+        if name.strip()
+    ]
+    result: list[str] = []
+    for name in names:
+        normalized = _normalize_model_name(name)
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return result
 
 
 def _total_budget() -> float:
@@ -192,7 +214,20 @@ def _discover_fallbacks(client, primary: str) -> list[str]:
         log.warning("Không lấy được danh sách model dự phòng: %s", exc)
         return []
 
-    candidates.sort(reverse=True)          # bản mới (số lớn) lên trước
+    candidates = [_normalize_model_name(name) for name in candidates]
+    candidates = [
+        name for name in dict.fromkeys(candidates)
+        if name != _normalize_model_name(primary)
+        and not any(k in name for k in ("preview", "exp-", "omni-", "carbon", "argon"))
+    ]
+    candidates.sort(
+        key=lambda name: (
+            "lite" not in name.lower(),
+            "flash" not in name.lower(),
+            name,
+        ),
+        reverse=True,
+    )
     _CACHED_FALLBACKS = candidates[:5]
     return [m for m in _CACHED_FALLBACKS if m != primary]
 
@@ -220,10 +255,14 @@ def _prepare_image_bytes(path: Path) -> tuple[bytes, str]:
 
 
 def _make_client(genai, types):
+    timeout_ms = int(_per_call_timeout() * 1000)
     try:
         return genai.Client(
             api_key=settings.GEMINI_API_KEY,
-            http_options=types.HttpOptions(timeout=int(_per_call_timeout() * 1000)),
+            http_options=types.HttpOptions(
+                timeout=timeout_ms,
+                retry_options=types.HttpRetryOptions(attempts=1),
+            ),
         )
     except Exception:
         return genai.Client(api_key=settings.GEMINI_API_KEY)
@@ -247,6 +286,7 @@ def _call_model(
     def _do():
         contents = [types.Part.from_bytes(data=img_bytes, mime_type=mime), prompt]
         thinking_cls = getattr(types, "ThinkingConfig", None)
+        afc_cls = getattr(types, "AutomaticFunctionCallingConfig", None)
 
         configs: list[tuple[bool, dict]] = []
         if model_name not in _PLAIN_JSON_MODELS:
@@ -270,10 +310,13 @@ def _call_model(
         last_err: Exception | None = None
         for is_plain, cfg_kwargs in configs:
             try:
+                call_cfg = dict(cfg_kwargs)
+                if afc_cls is not None:
+                    call_cfg["automatic_function_calling"] = afc_cls(disable=True)
                 resp = client.models.generate_content(
                     model=model_name,
                     contents=contents,
-                    config=types.GenerateContentConfig(**cfg_kwargs),
+                    config=types.GenerateContentConfig(**call_cfg),
                 )
                 if is_plain:
                     _PLAIN_JSON_MODELS.add(model_name)
@@ -452,11 +495,11 @@ def _invoke_with_fallback(
 ) -> tuple[_GeminiReceipt, str]:
     global _LAST_GOOD_MODEL
     now = time.monotonic()
-    primary = settings.GEMINI_MODEL
+    primary = _normalize_model_name(settings.GEMINI_MODEL)
     last_exc: Exception | None = None
 
-    # Thứ tự: model đã chạy tốt gần nhất -> GEMINI_MODEL -> GEMINI_FALLBACK_MODELS -> model tự dò từ API key.
-    configured = [primary] + [m.strip() for m in (settings.GEMINI_FALLBACK_MODELS or "").split(",") if m.strip()]
+    # Thứ tự: model chạy tốt gần nhất -> model trong .env -> model dò được từ API key.
+    configured = _configured_models(primary)
     ordered: list[str] = []
     if _LAST_GOOD_MODEL and _UNHEALTHY_UNTIL.get(_LAST_GOOD_MODEL, 0) <= now and _LAST_GOOD_MODEL in configured:
         ordered.append(_LAST_GOOD_MODEL)

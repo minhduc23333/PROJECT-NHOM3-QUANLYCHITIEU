@@ -159,7 +159,6 @@ export function render(el, params) {
   const meId = me?.id;
   const state = {
     groupId: params.group ?? "all",
-    scope: params.scope === "all" ? "all" : "mine", // mine: chỉ khoản liên quan tới tôi
     status: ["OPEN", "PAID", "ALL"].includes(params.status) ? params.status : "OPEN",
     groups: [],
     debts: [],
@@ -180,7 +179,6 @@ export function render(el, params) {
   const syncUrl = (push = true) => {
     const qs = new URLSearchParams();
     if (state.groupId !== "all") qs.set("group", state.groupId);
-    if (state.scope !== "mine") qs.set("scope", state.scope);
     if (state.status !== "OPEN") qs.set("status", state.status);
     const nextHash = `#/debts${qs.toString() ? `?${qs}` : ""}`;
     if (location.hash !== nextHash) {
@@ -204,7 +202,7 @@ export function render(el, params) {
     const inScope = state.debts.filter((d) => state.groupId === "all" || String(d.group_id) === String(state.groupId));
     const s = summarize(inScope, meId);
     const shown = inScope
-      .filter((d) => state.scope === "all" || roleOf(d, meId) !== "other")
+      .filter((d) => roleOf(d, meId) !== "other")
       .filter((d) => state.status === "ALL" || d.status === state.status)
       .sort((a, b) => (a.status === b.status ? b.id - a.id : a.status === "OPEN" ? -1 : 1));
 
@@ -225,7 +223,7 @@ export function render(el, params) {
       });
     } else if (!shown.length) {
       listHTML = `<div class="text-center text-muted p-4 card">${
-        state.status === "OPEN" && state.scope === "mine"
+        state.status === "OPEN"
           ? "Bạn không còn khoản nợ nào chưa thanh toán ở đây. 🎉"
           : "Không có khoản nợ nào khớp bộ lọc."
       } <button type="button" class="btn btn-link p-0 align-baseline" id="btn-clear">Xem tất cả</button></div>`;
@@ -337,9 +335,6 @@ export function render(el, params) {
       </div>
       <div class="col-lg-8 order-lg-1">
       <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
-        <div class="dchips" role="group" aria-label="Phạm vi">
-          ${chip("scope", "mine", "Liên quan tới tôi")}${chip("scope", "all", "Cả nhóm")}
-        </div>
         <div class="dchips" role="group" aria-label="Trạng thái">
           ${chip("status", "OPEN", "Còn nợ")}${chip("status", "PAID", "Đã trả")}${chip("status", "ALL", "Tất cả")}
         </div>
@@ -347,7 +342,6 @@ export function render(el, params) {
       <div class="legend mb-3">
         <span><span class="dot pay"></span> Bạn phải trả</span>
         <span><span class="dot recv"></span> Bạn được nhận</span>
-        <span><span class="dot" style="background:#d8d1e3"></span> Giữa thành viên khác</span>
       </div>
       ${listHTML}
       </div>
@@ -358,7 +352,6 @@ export function render(el, params) {
       syncUrl();
       paint();
     };
-    body.querySelectorAll("[data-scope]").forEach((b) => (b.onclick = () => ((state.scope = b.dataset.scope), syncUrl(), paint())));
     body.querySelectorAll("[data-status]").forEach((b) => (b.onclick = () => ((state.status = b.dataset.status), syncUrl(), paint())));
     body.querySelectorAll("[data-copy]").forEach((btn) => {
       btn.onclick = async () => {
@@ -387,7 +380,7 @@ export function render(el, params) {
       };
     });
     body.querySelector("#btn-clear")?.addEventListener("click", () => {
-      Object.assign(state, { scope: "all", status: "ALL" });
+      state.status = "ALL";
       syncUrl();
       paint();
     });
@@ -397,7 +390,7 @@ export function render(el, params) {
     body,
     async () => {
       const groups = await get("/groups");
-      // Lấy công nợ của từng nhóm (cả nhóm), lọc "liên quan tới tôi" ngay ở giao diện
+      // Lấy công nợ của từng nhóm, lọc các khoản liên quan tới tôi ngay ở giao diện
       const lists = await Promise.all(groups.map((g) => get(`/groups/${g.id}/debts`).then((r) => r.items).catch(() => [])));
       return { groups, debts: lists.flat() };
     },

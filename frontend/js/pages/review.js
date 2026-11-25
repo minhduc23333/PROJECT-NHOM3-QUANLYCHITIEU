@@ -4,6 +4,7 @@
 import { API_BASE, del, get, patch, post } from "../api.js";
 import { getToken, getUser } from "../auth.js";
 import { formatDateTime, formatNumber, formatVND, parseVND } from "../format.js";
+import { navigate } from "../router.js";
 import { confirmDialog, emptyHTML, esc, toast, withBusy } from "../ui.js";
 
 // Phải khớp backend (app/modules/receipts/categories.py). Mặc định "Khác".
@@ -175,7 +176,7 @@ export function render(el, params) {
     const headerOn = editable && d.can_edit_receipt;
     const itemsOn = editable && d.can_edit_items;
     const st = STATUS[d.status] ?? { text: d.status, cls: "" };
-    const back = `#/receipts${d.group_id ? `?group=${d.group_id}` : ""}`;
+    const back = `#/receipts?group=${d.group_id ?? "personal"}`;
     const meId = getUser()?.id;
     const payerName = members.find((m) => m.user_id === d.payer_id)?.full_name;
 
@@ -594,7 +595,7 @@ export function render(el, params) {
           await post(`/receipts/${d.id}/verify`, { payer_id: Number(form.elements.payer_id.value) });
         });
         toast.success("Đã xác nhận hóa đơn");
-        load();
+        navigate(d.group_id ? `/receipts/${d.id}/split` : "/receipts?group=personal");
       } catch (err) {
         if (err.message === "invalid") return;
         clearErrors();

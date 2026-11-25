@@ -76,6 +76,10 @@ def test_upload_personal_receipt_needs_no_group_and_is_private(client, monkeypat
     assert receipt["ocr_status"] == "PENDING"
     assert client.get(f"/api/receipts/{receipt['id']}", headers=owner).status_code == 200
     assert client.get(f"/api/receipts/{receipt['id']}", headers=other_user).status_code == 403
+    personal_list = client.get("/api/receipts/personal", headers=owner)
+    assert personal_list.status_code == 200
+    assert [row["id"] for row in personal_list.json()] == [receipt["id"]]
+    assert client.get("/api/receipts/personal", headers=other_user).json() == []
     assert len(list(tmp_path.iterdir())) == 1
 
 

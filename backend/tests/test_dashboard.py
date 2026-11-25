@@ -57,7 +57,7 @@ def test_empty_returns_zero(client):
     s = _summary(client, h)
     for key in ("personal_spent", "group_spent", "i_owe", "owed_to_me"):
         assert D(s[key]) == 0, key
-    assert s["group_count"] == 0 and s["receipt_count"] == 0
+    assert s["group_count"] == 0 and s["receipt_count"] == 0 and s["total_receipt_count"] == 0
     assert len(s["monthly"]) == 6 and all(D(m["total"]) == 0 for m in s["monthly"])
     assert s["by_category"] == [] and s["recent_receipts"] == []
 
@@ -70,12 +70,14 @@ def test_only_settled_receipts_are_counted(client, team):
     _receipt(team["gid"], u["A"], "DRAFT", "888888")
 
     a = _summary(client, team["h"]["A"])
-    assert a["group_count"] == 1 and a["receipt_count"] == 1
+    assert a["group_count"] == 1 and a["receipt_count"] == 1 and a["total_receipt_count"] == 3
     assert D(a["group_spent"]) == 300000          # Σ total_amount, chỉ SETTLED
     assert D(a["personal_spent"]) == 100000       # Σ final_amount của riêng A
     assert D(a["monthly"][-1]["total"]) == 100000  # biểu đồ tháng dùng đúng phần chia cá nhân
-    assert len(a["recent_receipts"]) == 1
-    assert D(a["recent_receipts"][0]["my_amount"]) == 100000
+    assert len(a["recent_receipts"]) == 3
+    assert {row["status"] for row in a["recent_receipts"]} == {"SETTLED", "VERIFIED", "DRAFT"}
+    settled_row = next(row for row in a["recent_receipts"] if row["status"] == "SETTLED")
+    assert D(settled_row["my_amount"]) == 100000
     assert a["recent_receipts"][0]["group_name"] == "Nhóm"
     # thành viên khác: chung chi tiêu nhóm nhưng phần cá nhân của mình
     b = _summary(client, team["h"]["B"])
@@ -116,16 +118,19 @@ def test_removed_member_loses_access_to_group_numbers(client, team):
     assert D(c["group_spent"]) == 0 and D(c["personal_spent"]) == 0 and c["recent_receipts"] == []
 
 
-def test_personal_receipt_counts_only_for_owner_and_only_when_settled(client, team):
+def test_personal_receipt_spend_includes_verified_but_not_draft_and_is_private(client, team):
     u = team["uid"]
     _receipt(None, u["A"], "SETTLED", "50000", category="Ăn uống")
-    _receipt(None, u["A"], "DRAFT", "70000")
+    _receipt(None, u["A"], "VERIFIED", "70000", category="Ăn uống")
+    _receipt(None, u["A"], "DRAFT", "90000")
     a = _summary(client, team["h"]["A"])
-    assert a["receipt_count"] == 1 and D(a["personal_spent"]) == 50000
+    assert a["receipt_count"] == 1 and a["total_receipt_count"] == 3 and D(a["personal_spent"]) == 120000
     assert D(a["group_spent"]) == 0                     # hóa đơn cá nhân không thuộc chi tiêu nhóm
-    assert a["recent_receipts"][0]["group_id"] is None
+    assert a["recent_receipts"][0]["group_id"] is None and a["recent_receipts"][0]["status"] == "DRAFT"
+    assert D(a["recent_receipts"][1]["my_amount"]) == 70000
     b = _summary(client, team["h"]["B"])                # người khác không thấy hóa đơn cá nhân của A
-    assert b["receipt_count"] == 0 and D(b["personal_spent"]) == 0
+    assert b["receipt_count"] == 0 and b["total_receipt_count"] == 0 and D(b["personal_spent"]) == 0
+    assert b["recent_receipts"] == []
 
 
 def test_chart_data_by_month_and_category(client, team):

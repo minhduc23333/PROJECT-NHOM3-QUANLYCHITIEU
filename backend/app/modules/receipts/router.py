@@ -61,6 +61,15 @@ async def upload_personal_receipt(db: DB, user: CurrentUser, file: Annotated[Upl
 
 
 @router.get(
+    "/receipts/personal",
+    response_model=list[ReceiptOut],
+    summary="Danh sách hóa đơn cá nhân của tôi",
+)
+def list_personal_receipts(db: DB, user: CurrentUser):
+    return service.list_personal_receipts(db, user)
+
+
+@router.get(
     "/receipts/category-suggestion",
     response_model=CategorySuggestion,
     summary="Gợi ý danh mục theo tên cửa hàng (quy tắc từ khóa)",

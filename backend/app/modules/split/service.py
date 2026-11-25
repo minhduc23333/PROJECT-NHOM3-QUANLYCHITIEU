@@ -216,7 +216,7 @@ def finalize_receipt(db: Session, user: User, receipt_id: int) -> SplitResult:
         errors.append({"field": "items", "message": "Hóa đơn chưa có dòng món nào"})
     for i in items:
         if i.id not in selectors:
-            errors.append({"field": "items", "message": f"Món '{i.item_name}' (id {i.id}) chưa có ai chọn"})
+            errors.append({"field": "items", "message": f"Món '{i.item_name}' chưa có ai chọn"})
 
     items_sum = sum((i.line_total for i in items), ZERO)
     discount = _discount_amount(receipt)

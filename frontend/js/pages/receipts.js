@@ -3,6 +3,7 @@
 // - Nút "+ Thêm hóa đơn": mở trang tải ảnh & đọc hóa đơn (#/receipts/new, T05E175)
 // - Lọc cơ bản: theo trạng thái, tìm theo tên cửa hàng, sắp xếp
 import { del, get } from "../api.js";
+import { getUser } from "../auth.js";
 import { formatDate, formatVND } from "../format.js";
 import { confirmDialog, dataTable, emptyHTML, esc, renderState, selectField, toast, withBusy } from "../ui.js";
 
@@ -39,6 +40,17 @@ const CSS = `
 .rc-chip[aria-pressed="true"] { background: var(--grad); border-color: transparent; font-weight: 600; }
 .rc-chip .rc-count { display: inline-block; min-width: 20px; margin-left: 4px; padding: 0 6px; border-radius: 999px; background: var(--mist); font-size: .75rem; font-weight: 600; }
 .rc-chip[aria-pressed="true"] .rc-count { background: rgba(255, 255, 255, .7); }
+.page-receipts .pagination {
+  --bs-pagination-color: var(--brand-dark); --bs-pagination-bg: #fff; --bs-pagination-border-color: var(--line);
+  --bs-pagination-hover-color: var(--plum); --bs-pagination-hover-bg: var(--mist); --bs-pagination-hover-border-color: #d9c9ef;
+  --bs-pagination-focus-color: var(--brand-dark); --bs-pagination-focus-bg: var(--mist);
+  --bs-pagination-focus-box-shadow: 0 0 0 .2rem rgba(182, 161, 212, .35);
+  --bs-pagination-active-color: var(--plum); --bs-pagination-active-bg: #d9b5d9; --bs-pagination-active-border-color: #d9b5d9;
+  --bs-pagination-disabled-color: #a39bb0; --bs-pagination-disabled-bg: #fff; --bs-pagination-disabled-border-color: var(--line);
+}
+.page-receipts .pagination .page-item.active .page-link {
+  background: var(--grad); border-color: transparent; color: var(--plum); font-weight: 600;
+}
 .rc-badge-draft { background: #ece8f1; color: #5b5568; }
 .rc-badge-verified { background: #e9ddf7; color: #5a4790; }
 .rc-badge-settled { background: #fce4ec; color: #a0516e; }
@@ -122,6 +134,7 @@ const SORTS = {
   amount: { text: "Tiền nhiều nhất", fn: (a, b) => Number(b.total_amount ?? 0) - Number(a.total_amount ?? 0) },
 };
 const dateOf = (r) => new Date(r.receipt_date ?? r.created_at ?? 0).getTime() || 0;
+const PAGE_SIZE = 5;
 
 // Bỏ dấu để tìm "pho hoa" vẫn ra "Phở Hòa"
 const fold = (s) =>
@@ -142,12 +155,25 @@ export function applyFilters(rows, { status = "ALL", q = "", sort = "newest" } =
     .sort((SORTS[sort] ?? SORTS.newest).fn);
 }
 
+export function paginateReceipts(rows, page = 1) {
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const currentPage = Math.min(Math.max(1, Number(page) || 1), pageCount);
+  const start = (currentPage - 1) * PAGE_SIZE;
+  return {
+    rows: rows.slice(start, start + PAGE_SIZE),
+    page: currentPage,
+    pageCount,
+    start,
+  };
+}
+
 export function render(el, params) {
   const state = {
     groupId: params.group ?? null,
     status: STATUS[params.status] ? params.status : "ALL",
     q: "",
     sort: "newest",
+    page: 1,
     rows: [],
     members: new Map(),
     highlight: null,
@@ -160,7 +186,7 @@ export function render(el, params) {
         <span class="page-title-ico" aria-hidden="true">${ICON}</span>
         <div>
           <h2 class="page-title mb-0">Hóa đơn</h2>
-          <div class="text-muted">Hóa đơn của từng nhóm và trạng thái chia tiền</div>
+          <div class="text-muted">Hóa đơn cá nhân và của các nhóm, trạng thái chia tiền</div>
         </div>
       </div>
       <a class="btn btn-primary d-none" id="btn-add" href="#/receipts/new">+ Thêm hóa đơn</a>
@@ -249,6 +275,7 @@ export function render(el, params) {
     filters.querySelectorAll("[data-status]").forEach((b) => {
       b.onclick = () => {
         state.status = b.dataset.status;
+        state.page = 1;
         syncUrl();
         paintFilters();
         paintTable();
@@ -257,36 +284,67 @@ export function render(el, params) {
     const q = filters.querySelector("#f-q");
     q.oninput = () => {
       state.q = q.value;
+      state.page = 1;
       paintTable();
     };
     filters.querySelector("#f-sort").onchange = (e) => {
       state.sort = e.target.value;
+      state.page = 1;
       paintTable();
     };
   }
 
   function paintTable() {
     if (!state.rows.length) {
-      list.innerHTML = emptyHTML("Nhóm này chưa có hóa đơn. Bấm “+ Thêm hóa đơn” để tải ảnh hóa đơn đầu tiên.");
+      list.innerHTML = state.groupId === "personal"
+        ? emptyHTML("Bạn chưa có hóa đơn cá nhân.", { actionText: "Thêm hóa đơn cá nhân", actionHref: "#/receipts/new?group=personal" })
+        : emptyHTML("Nhóm này chưa có hóa đơn. Bấm “+ Thêm hóa đơn” để tải ảnh hóa đơn đầu tiên.");
       return;
     }
-    const shown = applyFilters(state.rows, state);
-    const total = shown.reduce((s, r) => s + Number(r.total_amount ?? 0), 0);
-    list.innerHTML = shown.length
-      ? `<div class="rc-summary mb-2">Hiển thị ${shown.length}/${state.rows.length} hóa đơn · Tổng <b>${formatVND(total)}</b></div>
-         <div class="d-none d-md-block rc-table">${dataTable(cols, shown)}</div>
-         <div class="d-md-none">${cardList(shown)}</div>`
+    const filtered = applyFilters(state.rows, state);
+    const page = paginateReceipts(filtered, state.page);
+    state.page = page.page;
+    const total = filtered.reduce((s, r) => s + Number(r.total_amount ?? 0), 0);
+    const pagination = page.pageCount > 1
+      ? `<nav class="mt-3" aria-label="Phân trang hóa đơn">
+          <ul class="pagination justify-content-center mb-0">
+            <li class="page-item ${page.page === 1 ? "disabled" : ""}">
+              <button type="button" class="page-link" data-page="${page.page - 1}" ${page.page === 1 ? "disabled" : ""} aria-label="Trang trước">‹</button>
+            </li>
+            ${Array.from({ length: page.pageCount }, (_, index) => {
+              const pageNumber = index + 1;
+              return `<li class="page-item ${pageNumber === page.page ? "active" : ""}">
+                <button type="button" class="page-link" data-page="${pageNumber}" ${pageNumber === page.page ? 'aria-current="page"' : ""}>${pageNumber}</button>
+              </li>`;
+            }).join("")}
+            <li class="page-item ${page.page === page.pageCount ? "disabled" : ""}">
+              <button type="button" class="page-link" data-page="${page.page + 1}" ${page.page === page.pageCount ? "disabled" : ""} aria-label="Trang sau">›</button>
+            </li>
+          </ul>
+        </nav>`
+      : "";
+    list.innerHTML = filtered.length
+      ? `<div class="rc-summary mb-2">Hiển thị ${page.start + 1}–${page.start + page.rows.length} trong ${filtered.length} hóa đơn · Tổng <b>${formatVND(total)}</b></div>
+         <div class="d-none d-md-block rc-table">${dataTable(cols, page.rows)}</div>
+         <div class="d-md-none">${cardList(page.rows)}</div>
+         ${pagination}`
       : `<div class="rc-empty text-center text-muted p-4">Không có hóa đơn khớp bộ lọc.
            <button type="button" class="btn btn-link p-0 align-baseline" id="btn-clear">Xóa bộ lọc</button></div>`;
+    list.querySelectorAll("[data-page]").forEach((button) => {
+      button.onclick = () => {
+        state.page = Number(button.dataset.page);
+        paintTable();
+      };
+    });
     list.querySelector("#btn-clear")?.addEventListener("click", () => {
-      Object.assign(state, { status: "ALL", q: "", sort: "newest" });
+      Object.assign(state, { status: "ALL", q: "", sort: "newest", page: 1 });
       syncUrl();
       paintFilters();
       paintTable();
     });
     if (state.highlight) {
       // Đánh dấu hóa đơn vừa thêm (cả bảng trên máy tính và thẻ trên điện thoại)
-      const idx = shown.findIndex((r) => r.id === state.highlight);
+      const idx = page.rows.findIndex((r) => r.id === state.highlight);
       list.querySelectorAll("tbody tr")[idx]?.classList.add("table-warning");
       list.querySelectorAll(".receipt-card")[idx]?.classList.add("rc-new");
       state.highlight = null;
@@ -320,12 +378,17 @@ export function render(el, params) {
     renderState(
       list,
       async () => {
+        if (state.groupId === "personal") {
+          state.members = new Map([[getUser()?.id, "Tôi"]]);
+          return get("/receipts/personal");
+        }
         const [g, rows] = await Promise.all([get(`/groups/${state.groupId}`), get(`/groups/${state.groupId}/receipts`)]);
         state.members = new Map((g.members ?? []).map((m) => [m.user_id, m.full_name]));
         return rows;
       },
       (_, rows) => {
         state.rows = rows;
+        state.page = 1;
         filters.classList.remove("d-none");
         addBtn.classList.remove("d-none");
         paintFilters();
@@ -338,20 +401,21 @@ export function render(el, params) {
     el.querySelector("#picker"),
     () => get("/groups"),
     (box, groups) => {
-      if (!groups.length) {
-        box.innerHTML = emptyHTML("Bạn cần tham gia hoặc tạo một nhóm trước khi thêm hóa đơn");
-        list.innerHTML = "";
-        return;
+      const options = [
+        ...groups.map((g) => ({ value: g.id, text: g.name })),
+        { value: "personal", text: "Cá nhân (chỉ mình tôi xem)" },
+      ];
+      if (state.groupId !== "personal" && !groups.some((g) => String(g.id) === String(state.groupId))) {
+        state.groupId = groups[0]?.id ?? "personal";
       }
-      if (!groups.some((g) => String(g.id) === String(state.groupId))) state.groupId = groups[0].id;
       box.innerHTML = `<div style="max-width:360px">${selectField({
-        label: "Nhóm",
+        label: "Hóa đơn của",
         name: "group",
         value: state.groupId,
-        options: groups.map((g) => ({ value: g.id, text: g.name })),
+        options,
       })}</div>`;
       box.querySelector("select").onchange = (e) => {
-        Object.assign(state, { groupId: e.target.value, status: "ALL", q: "" });
+        Object.assign(state, { groupId: e.target.value, status: "ALL", q: "", page: 1 });
         syncUrl();
         loadReceipts();
       };

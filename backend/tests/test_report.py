@@ -1,4 +1,4 @@
-"""T05E180: báo cáo chi tiêu theo thời gian / danh mục (chỉ hóa đơn SETTLED)."""
+"""T05E180: báo cáo chi tiêu theo thời gian / danh mục."""
 from datetime import date
 from decimal import Decimal as D
 
@@ -60,6 +60,25 @@ def test_group_scope_uses_receipt_totals_without_personal(client, data):
     assert int(float(r["total"])) == 300000 and r["receipt_count"] == 2
     oct_ = r["periods"][1]
     assert {k: int(float(v)) for k, v in oct_["by_category"].items()} == {"Đi lại": 200000}
+
+
+def test_me_scope_includes_verified_personal_but_group_scope_does_not(client, data):
+    me_id = client.get("/api/auth/me", headers=data["ha"]).json()["id"]
+    with SessionLocal() as db:
+        _receipt(
+            db, group_id=None, uploader=me_id, total=45000, when=date(2026, 10, 3),
+            category="Ăn uống", merchant="Café", status="VERIFIED",
+        )
+        db.commit()
+
+    personal_report = q(client, data["ha"], scope="me", granularity="month").json()
+    assert int(float(personal_report["total"])) == 185000
+    assert personal_report["receipt_count"] == 4
+    assert int(float(personal_report["periods"][1]["total"])) == 125000
+
+    group_report = q(client, data["ha"], scope="group", granularity="month").json()
+    assert int(float(group_report["total"])) == 300000
+    assert group_report["receipt_count"] == 2
 
 
 def test_group_filter_excludes_personal_and_checks_membership(client, data):

@@ -25,7 +25,7 @@ def get_summary(db: DB, user: CurrentUser):
 @router.get(
     "/report",
     response_model=SpendingReport,
-    summary="Báo cáo chi tiêu theo thời gian và danh mục (chỉ hóa đơn SETTLED)",
+    summary="Báo cáo chi tiêu theo thời gian và danh mục",
 )
 def get_report(
     db: DB,
@@ -33,7 +33,9 @@ def get_report(
     date_from: date | None = Query(None, description="Từ ngày (mặc định: đầu tháng cách đây 5 tháng)"),
     date_to: date | None = Query(None, description="Đến ngày (mặc định: hôm nay)"),
     granularity: Literal["auto", "day", "week", "month"] = Query("auto", description="Gom theo ngày/tuần/tháng; auto tự chọn theo độ dài khoảng"),
-    scope: Literal["me", "group"] = Query("me", description="me: phần chi tiêu của tôi; group: tổng hóa đơn của nhóm"),
+    scope: Literal["me", "group"] = Query(
+        "me", description="me: hóa đơn nhóm đã chốt + cá nhân đã xác nhận; group: tổng hóa đơn nhóm đã chốt"
+    ),
     group_id: int | None = Query(None, description="Chỉ một nhóm (phải là thành viên)"),
 ):
     """T05E180. Trả về tổng, số hóa đơn, trung bình mỗi kỳ, chuỗi theo kỳ (kèm chia theo danh mục),
